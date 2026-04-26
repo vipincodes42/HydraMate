@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>HydraMate — Hydration Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+<style>
+  /* ── Reset & tokens ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #050d18;
+    --surface:   #0b1929;
+    --surface2:  #0f2035;
+    --border:    rgba(78,170,255,0.10);
+    --accent:    #4eaaff;
+    --accent2:   #00e5c8;
+    --warm:      #ff7043;
+    --text:      #d6eaff;
+    --muted:     #4a6f8a;
+    --font-head: 'Syne', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+    --r:         12px;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ── Animated grid bg ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(78,170,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(78,170,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Layout ── */
+  .shell {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 32px 24px 64px;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    font-family: var(--font-head);
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #fff;
+  }
+
+  .logo span {
+    color: var(--accent);
+  }
+
+  .live-badge {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent2);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.5; transform: scale(0.7); }
+  }
+
+  /* ── Config banner ── */
+  #config-banner {
+    background: rgba(255,112,67,0.10);
+    border: 1px solid rgba(255,112,67,0.25);
+    border-radius: var(--r);
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    font-size: 12px;
+    color: #ff9d7d;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  #config-banner.hidden { display: none; }
+
+  /* ── Grid system ── */
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .grid-full {
+    margin-bottom: 16px;
+  }
+
+  @media (max-width: 720px) {
+    .grid-3, .grid-2 { grid-template-columns: 1fr; }
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 22px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .card:hover { border-color: rgba(78,170,255,0.22); }
+
+  .card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(78,170,255,0.3), transparent);
+  }
+
+  .card-label {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .card-value {
+    font-family: var(--font-head);
+    font-size: 36px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .card-sub {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .card-accent { color: var(--accent); }
+  .card-green  { color: var(--accent2); }
+  .card-warm   { color: var(--warm); }
+
+  /* ── Progress bar ── */
+  .prog-wrap {
+    margin-top: 14px;
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .prog-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    transition: width 0.8s cubic-bezier(0.34,1.56,0.64,1);
+  }
+
+  /* ── Plant card ── */
+  .plant-card {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .plant-emoji-wrap {
+    font-size: 56px;
+    line-height: 1;
+    filter: drop-shadow(0 0 16px rgba(78,170,255,0.3));
+    transition: all 0.5s;
+    flex-shrink: 0;
+  }
+
+  .plant-info { flex: 1; }
+
+  .plant-name {
+    font-family: var(--font-head);
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 4px;
+  }
+
+  /* ── Bar chart ── */
+  .chart-area {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    height: 90px;
+    margin-top: 16px;
+  }
+
+  .bar-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    height: 100%;
+    justify-content: flex-end;
+  }
+
+  .bar-val {
+    font-size: 9px;
+    color: var(--muted);
+    transition: color 0.3s;
+  }
+
+  .bar-rect {
+    width: 100%;
+    min-height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--surface2);
+    transition: height 0.6s cubic-bezier(0.34,1.56,0.64,1), background 0.3s;
+    position: relative;
+  }
+
+  .bar-rect.hit { background: linear-gradient(180deg, var(--accent), var(--accent2)); }
+
+  .bar-day {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Coaster live panel ── */
+  .coaster-panel {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+
+  .coaster-visual {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    background: var(--surface2);
+    position: relative;
+    transition: border-color 0.4s;
+  }
+
+  .coaster-visual.alert {
+    border-color: var(--accent);
+    animation: coaster-pulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes coaster-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(78,170,255,0); }
+    50%       { box-shadow: 0 0 0 10px rgba(78,170,255,0.15); }
+  }
+
+  .coaster-stats { flex: 1; }
+
+  .coaster-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  .coaster-row:last-child { border-bottom: none; }
+  .coaster-key { color: var(--muted); }
+  .coaster-val { color: #fff; font-weight: 500; }
+
+  /* ── Alert banner ── */
+  .alert-card {
+    background: rgba(78,170,255,0.07);
+    border-color: rgba(78,170,255,0.25);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 22px;
+  }
+
+  .alert-card.hidden { display: none; }
+  .alert-icon { font-size: 22px; flex-shrink: 0; }
+  .alert-text { font-size: 12px; color: var(--text); }
+  .alert-text strong { color: var(--accent); font-weight: 500; }
+
+  /* ── Config form ── */
+  .config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  @media (max-width: 600px) { .config-grid { grid-template-columns: 1fr; } }
+
+  .field label {
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .field input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .field input:focus { border-color: var(--accent); }
+
+  .btn {
+    margin-top: 16px;
+    padding: 10px 22px;
+    background: var(--accent);
+    color: #050d18;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+
+  .btn:hover  { opacity: 0.88; }
+  .btn:active { transform: scale(0.97); }
+
+  /* ── Log stream ── */
+  .log-stream {
+    margin-top: 14px;
+    max-height: 120px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .log-line {
+    font-size: 11px;
+    color: var(--muted);
+    border-left: 2px solid var(--surface2);
+    padding-left: 10px;
+    animation: fadein 0.3s ease;
+  }
+
+  .log-line .ts { color: var(--accent2); margin-right: 8px; }
+  .log-line .sip { color: var(--accent); }
+
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">Hydra<span>Mate</span></div>
+    <div class="live-badge">
+      <div class="live-dot" id="live-dot"></div>
+      <span id="conn-label">connecting…</span>
+    </div>
+  </header>
+
+  <!-- Config warning -->
+  <div id="config-banner">
+    ⚠ Firebase not configured — showing demo data. Fill in your credentials below to connect to your coaster.
+  </div>
+
+  <!-- Alert row -->
+  <div class="card alert-card hidden grid-full" id="alert-card">
+    <div class="alert-icon">💧</div>
+    <div class="alert-text">
+      <strong>Time to drink!</strong> Your coaster LED is pulsing blue — no sip detected in the last 20 minutes.
+    </div>
+  </div>
+
+  <!-- Top stat cards -->
+  <div class="grid-3">
+    <div class="card">
+      <div class="card-label">Consumed today</div>
+      <div class="card-value card-accent" id="stat-drunk">—</div>
+      <div class="card-sub" id="stat-drunk-sub">of 2000 mL goal</div>
+      <div class="prog-wrap"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Remaining</div>
+      <div class="card-value" id="stat-remain">—</div>
+      <div class="card-sub">mL to hit your goal</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Goal progress</div>
+      <div class="card-value card-green" id="stat-pct">—</div>
+      <div class="card-sub" id="stat-pct-sub">keep going</div>
+    </div>
+  </div>
+
+  <!-- Plant + Coaster live -->
+  <div class="grid-2">
+
+    <!-- Plant card -->
+    <div class="card">
+      <div class="card-label">Hydration companion</div>
+      <div class="plant-card">
+        <div class="plant-emoji-wrap" id="plant-emoji">🌱</div>
+        <div class="plant-info">
+          <div class="plant-name" id="plant-name">Seedling</div>
+          <div class="card-sub" id="plant-desc">Just getting started — take your first sip!</div>
+          <div class="prog-wrap" style="margin-top:12px"><div class="prog-fill" id="plant-prog" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coaster live -->
+    <div class="card">
+      <div class="card-label">Coaster — live sensor</div>
+      <div class="coaster-panel">
+        <div class="coaster-visual" id="coaster-visual">🫧</div>
+        <div class="coaster-stats">
+          <div class="coaster-row">
+            <span class="coaster-key">Bottle weight</span>
+            <span class="coaster-val" id="c-weight">— g</span>
+          </div>
+          <div class="coaster-row">
+            <span class="coaster-key">Last sip</span>
+            <span class="coaster-val" id="c-lastsip">—</span>
+          </div>
+          <div class="coaster-row">
+            <span class="coaster-key">Alert active</span>
+            <span class="coaster-val" id="c-alert">—</span>
+          </div>
+          <div class="coaster-row">
+            <span class="coaster-key">Device</span>
+            <span class="coaster-val" id="c-device">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 7-day chart -->
+  <div class="card grid-full">
+    <div class="card-label">7-day history</div>
+    <div class="chart-area" id="chart-area">
+      <!-- filled by JS -->
+    </div>
+  </div>
+
+  <!-- Sip log -->
+  <div class="card grid-full">
+    <div class="card-label">Live event log</div>
+    <div class="log-stream" id="log-stream">
+      <div class="log-line"><span class="ts">--:--:--</span>Waiting for data…</div>
+    </div>
+  </div>
+
+  <!-- Firebase config -->
+  <div class="card grid-full" style="margin-top:8px">
+    <div class="card-label">Firebase configuration</div>
+    <div class="card-sub" style="margin-bottom:4px">Paste your credentials from Project Settings → General → Your apps</div>
+    <div class="config-grid">
+      <div class="field"><label>API Key</label><input id="f-apiKey"     placeholder="AIzaSy…"/></div>
+      <div class="field"><label>Auth Domain</label><input id="f-authDomain" placeholder="project.firebaseapp.com"/></div>
+      <div class="field"><label>Database URL</label><input id="f-dbUrl"     placeholder="https://project-rtdb.firebaseio.com"/></div>
+      <div class="field"><label>Project ID</label><input id="f-projectId"  placeholder="project-id"/></div>
+      <div class="field"><label>User UID (from Firebase Auth)</label><input id="f-uid" placeholder="abc123xyz"/></div>
+    </div>
+    <button class="btn" onclick="connectFirebase()">Connect to coaster</button>
+  </div>
+
+  <footer>
+    <span>HydraMate dashboard</span>
+    <span id="last-update">—</span>
+  </footer>
+
+</div>
+
+<!-- Firebase SDK -->
+<script type="module">
+import { initializeApp }           from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+const GOAL_ML = 2000;
+
+// ── Demo data (shown before Firebase connects) ──────────────────
+const DEMO_LIVE = {
+  weightG: 312,
+  totalDrunkMl: 820,
+  alertActive: false,
+  lastSipEpoch: Math.floor(Date.now()/1000) - 480,
+  deviceId: 'coaster_001',
+};
+const DEMO_HISTORY = [1450, 1800, 960, 2100, 1600, 500, 820];
+
+// ── Plant stages ────────────────────────────────────────────────
+const PLANTS = [
+  { pct: 0.00, emoji: '🌱', name: 'Seedling',   desc: 'Just getting started — take your first sip!' },
+  { pct: 0.15, emoji: '🌿', name: 'Sprouting',  desc: 'Good start! Keep the momentum going.' },
+  { pct: 0.35, emoji: '🪴', name: 'Growing',    desc: "You're past the halfway mark — great work." },
+  { pct: 0.60, emoji: '🌳', name: 'Flourishing',desc: 'Almost there! One more push.' },
+  { pct: 0.85, emoji: '🌻', name: 'Thriving!',  desc: "Goal reached — you're glowing today." },
+];
+
+function getPlant(pct) {
+  let stage = PLANTS[0];
+  for (const p of PLANTS) { if (pct >= p.pct) stage = p; }
+  return stage;
+}
+
+// ── Render functions ────────────────────────────────────────────
+function fmt(n) { return Math.round(n).toLocaleString(); }
+
+function timeSince(epochSec) {
+  const s = Math.floor(Date.now()/1000) - epochSec;
+  if (s < 60)  return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return `${Math.floor(s/3600)}h ago`;
+}
+
+function renderLive(d) {
+  const ml  = d.totalDrunkMl ?? 0;
+  const pct = Math.min(ml / GOAL_ML, 1);
+  const rem = Math.max(0, GOAL_ML - ml);
+  const plant = getPlant(pct);
+
+  // Stats
+  document.getElementById('stat-drunk').textContent     = `${fmt(ml)} mL`;
+  document.getElementById('stat-remain').textContent    = `${fmt(rem)} mL`;
+  document.getElementById('stat-pct').textContent       = `${Math.round(pct*100)}%`;
+  document.getElementById('stat-pct-sub').textContent   = pct >= 1 ? '🎉 goal complete!' : `${fmt(rem)} mL to go`;
+  document.getElementById('prog-fill').style.width      = `${pct*100}%`;
+
+  // Plant
+  document.getElementById('plant-emoji').textContent  = plant.emoji;
+  document.getElementById('plant-name').textContent   = plant.name;
+  document.getElementById('plant-desc').textContent   = plant.desc;
+  document.getElementById('plant-prog').style.width   = `${pct*100}%`;
+
+  // Coaster
+  document.getElementById('c-weight').textContent  = `${(d.weightG ?? 0).toFixed(1)} g`;
+  document.getElementById('c-lastsip').textContent  = d.lastSipEpoch ? timeSince(d.lastSipEpoch) : '—';
+  document.getElementById('c-alert').textContent    = d.alertActive ? '⚡ Yes' : 'No';
+  document.getElementById('c-device').textContent   = d.deviceId ?? '—';
+
+  const cv = document.getElementById('coaster-visual');
+  cv.classList.toggle('alert', !!d.alertActive);
+
+  document.getElementById('alert-card').classList.toggle('hidden', !d.alertActive);
+  document.getElementById('last-update').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+}
+
+function renderHistory(arr) {
+  const area = document.getElementById('chart-area');
+  area.innerHTML = '';
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const today = new Date().getDay();
+  arr.forEach((ml, i) => {
+    const hPct = Math.min(ml / GOAL_ML, 1);
+    const hPx  = Math.max(4, Math.round(hPct * 80));
+    const dayLabel = days[(today - (arr.length - 1 - i) + 7) % 7];
+    const col = document.createElement('div');
+    col.className = 'bar-col';
+    col.innerHTML = `
+      <div class="bar-val">${ml > 0 ? fmt(ml) : ''}</div>
+      <div class="bar-rect ${ml >= GOAL_ML ? 'hit' : ''}" style="height:${hPx}px"></div>
+      <div class="bar-day">${dayLabel}</div>
+    `;
+    area.appendChild(col);
+  });
+}
+
+function addLog(msg, type = '') {
+  const stream = document.getElementById('log-stream');
+  if (stream.children.length === 1 && stream.children[0].textContent.includes('Waiting')) {
+    stream.innerHTML = '';
+  }
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  const ts = new Date().toLocaleTimeString();
+  line.innerHTML = `<span class="ts">${ts}</span><span class="${type}">${msg}</span>`;
+  stream.prepend(line);
+  if (stream.children.length > 30) stream.removeChild(stream.lastChild);
+}
+
+// ── Demo mode ───────────────────────────────────────────────────
+renderLive(DEMO_LIVE);
+renderHistory(DEMO_HISTORY);
+addLog('Demo mode — connect Firebase to see live data');
+
+// ── Firebase connect ─────────────────────────────────────────────
+window.connectFirebase = function() {
+  const config = {
+    apiKey:      document.getElementById('f-apiKey').value.trim(),
+    authDomain:  document.getElementById('f-authDomain').value.trim(),
+    databaseURL: document.getElementById('f-dbUrl').value.trim(),
+    projectId:   document.getElementById('f-projectId').value.trim(),
+  };
+  const uid = document.getElementById('f-uid').value.trim();
+
+  if (!config.databaseURL || !uid) {
+    alert('Please fill in at least the Database URL and User UID.');
+    return;
+  }
+
+  try {
+    const app = initializeApp(config, 'hydrmate-' + Date.now());
+    const db  = getDatabase(app);
+
+    // Live data
+    onValue(ref(db, `users/${uid}/live`), (snap) => {
+      const d = snap.val();
+      if (!d) { addLog('No live data yet — flash your ESP32!'); return; }
+      document.getElementById('config-banner').classList.add('hidden');
+      document.getElementById('conn-label').textContent = 'live';
+      document.getElementById('live-dot').style.background = '#00e5c8';
+      renderLive(d);
+      addLog(`Weight: ${d.weightG?.toFixed(1)}g | Drunk: ${fmt(d.totalDrunkMl ?? 0)} mL`, 'sip');
+    });
+
+    // History (last 7 days)
+    const history = [];
+    const today = new Date();
+    let loaded = 0;
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const key = d.toISOString().slice(0,10).replace(/-/g,'');
+      onValue(ref(db, `users/${uid}/history/${key}/totalMl`), (snap) => {
+        history[6 - i] = snap.val() ?? 0;
+        loaded++;
+        if (loaded === 7) renderHistory(history);
+      }, { onlyOnce: true });
+    }
+
+    addLog('Firebase connected! Listening for coaster data…');
+  } catch (e) {
+    addLog('Firebase error: ' + e.message);
+    console.error(e);
+  }
+};
+</script>
+</body>
+</html>
