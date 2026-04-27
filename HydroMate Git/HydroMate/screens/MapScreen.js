@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import MapView, { Marker, Callout } from 'react-native-maps';
-import { getWaterStations } from '../db';
+import { refillStations } from '../data/refillStations';
 import { Colors } from '../constants/theme';
 
 const darkMapStyle = [
@@ -115,20 +115,6 @@ const darkMapStyle = [
 ];
 
 export default function MapScreen() {
-  const [stations, setStations] = useState([]);
-
-  useEffect(() => {
-    // Fetch water stations when component mounts
-    async function loadStations() {
-      try {
-        const data = await getWaterStations();
-        setStations(data);
-      } catch (error) {
-        console.error("Failed to fetch stations:", error);
-      }
-    }
-    loadStations();
-  }, []);
 
   const ucsdRegion = {
     latitude: 32.8801,
@@ -145,20 +131,27 @@ export default function MapScreen() {
         customMapStyle={darkMapStyle}
         userInterfaceStyle="dark"
       >
-        {stations.map((station) => (
+        {refillStations.map((station) => (
           <Marker
             key={station.id}
             coordinate={{
               latitude: station.latitude,
               longitude: station.longitude,
             }}
-            pinColor={'#4FC3F7'} // Match the Hydramate brand color
           >
+            {/* Custom Marker Icon */}
+            <View style={styles.markerContainer}>
+              <Text style={styles.markerText}>💧</Text>
+            </View>
+            
+            {/* Custom Callout Card */}
             <Callout>
               <View style={styles.calloutContainer}>
+                <Text style={styles.stationLabel}>Water Refill Station</Text>
                 <Text style={styles.stationName}>{station.name || "Water Station"}</Text>
-                <Text style={styles.stationDetail}>Rating: {station.rating ? station.rating.toFixed(1) : 'N/A'} ⭐</Text>
-                <Text style={styles.stationDetail}>Votes: {station.votes || 0}</Text>
+                <Text style={styles.stationDetail}>
+                  {station.description || "📍 Location not specified"}
+                </Text>
               </View>
             </Callout>
           </Marker>
@@ -178,16 +171,46 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   calloutContainer: {
-    padding: 5,
-    minWidth: 120,
+    padding: 12,
+    minWidth: 180,
+    maxWidth: 240,
+    borderRadius: 8,
+  },
+  stationLabel: {
+    fontSize: 10,
+    color: '#4FC3F7',
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
   },
   stationName: {
     fontWeight: 'bold',
     fontSize: 16,
-    marginBottom: 4,
+    color: '#0A1628',
+    marginBottom: 6,
   },
   stationDetail: {
-    fontSize: 14,
-    color: '#555',
+    fontSize: 13,
+    color: '#546E8A',
+    lineHeight: 18,
+  },
+  markerContainer: {
+    backgroundColor: '#4FC3F7',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  markerText: {
+    fontSize: 16,
   }
 });
