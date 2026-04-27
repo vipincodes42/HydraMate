@@ -5,9 +5,10 @@ import {
     Dimensions, ScrollView,
     StyleSheet,
     Text,
-    View
+    View,
 } from 'react-native';
 import { getHistory, subscribeToLive } from '../db';
+import { auth } from '../firebase';
 
 const { width } = Dimensions.get('window');
 const DAILY_GOAL_ML = 2000;
@@ -23,7 +24,7 @@ function getPlantStage(pct) {
 export default function HomeScreen() {
   const [live, setLive]       = useState(null);
   const [history, setHistory] = useState([]);
-  const uid = 'testUser123';
+  const uid = auth.currentUser?.uid;
   const fillAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
