@@ -2,28 +2,67 @@ import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'fire
 import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { auth } from '../firebase';
+import { checkUsernameExists, setUsername } from '../db';
 
 export default function LoginScreen({ onLogin }) {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [isNew, setIsNew]       = useState(false);
+  
+  // New User Registration Fields
+  const [username, setSignupUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
 
   async function handleSubmit() {
     try {
       if (isNew) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        // Strict Pre-flight Data Validation
+        if (!displayName.trim()) throw new Error("Display Name is required.");
+        if (!username.trim()) throw new Error("Username is required.");
+        
+        const unLower = username.toLowerCase().trim();
+        const valid = /^[a-zA-Z0-9_]{3,20}$/.test(username);
+        if (!valid) throw new Error("Username must be between 3-20 characters without spaces or symbols.");
+        
+        const exists = await checkUsernameExists(unLower);
+        if (exists) throw new Error("That username is already taken!");
+
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        // Bind payload instantly before route handlers flip UI states
+        await setUsername(cred.user.uid, username, displayName, email);
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
       onLogin();
     } catch (e) {
-      Alert.alert('Error', e.message);
+      Alert.alert('Authentication Error', e.message);
     }
   }
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>💧 HydroMate</Text>
+      
+      {isNew && (
+          <>
+          <TextInput
+            style={styles.input}
+            placeholder="Display Name"
+            placeholderTextColor="#546E8A"
+            value={displayName}
+            onChangeText={setDisplayName}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            placeholderTextColor="#546E8A"
+            value={username}
+            onChangeText={setSignupUsername}
+            autoCapitalize="none"
+          />
+          </>
+      )}
+
       <TextInput
         style={styles.input}
         placeholder="Email"
@@ -41,9 +80,11 @@ export default function LoginScreen({ onLogin }) {
         onChangeText={setPassword}
         secureTextEntry
       />
+      
       <Pressable style={styles.button} onPress={handleSubmit}>
         <Text style={styles.buttonText}>{isNew ? 'Sign Up' : 'Log In'}</Text>
       </Pressable>
+      
       <Pressable onPress={() => setIsNew(!isNew)}>
         <Text style={styles.toggle}>
           {isNew ? 'Already have an account? Log in' : "Don't have an account? Sign up"}

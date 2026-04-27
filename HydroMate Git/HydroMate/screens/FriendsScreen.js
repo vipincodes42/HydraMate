@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useState } from 'react';
 import { FlatList, Text, View, StyleSheet, Pressable, TextInput, ActivityIndicator, Modal, TouchableWithoutFeedback, Keyboard } from 'react-native';
-import { getFriendsData, searchUsersByEmail, sendFriendRequest, getPendingRequests, respondToFriendRequest, getRecentUserReviews } from '../db';
+import { getFriendsData, searchUsers, sendFriendRequest, getPendingRequests, respondToFriendRequest, getRecentUserReviews } from '../db';
 import { auth } from '../firebase';
 
 export default function FriendsScreen() {
@@ -26,7 +26,7 @@ export default function FriendsScreen() {
         try {
             if (activeTab === 'friends') {
                 const data = await getFriendsData(uid);
-                setFriends(data.sort((a, b) => (b.live?.totalDrunkMl ?? 0) - (a.live?.totalDrunkMl ?? 0)));
+                setFriends(data.sort((a, b) => (b.live?.totalDrankML ?? b.live?.totalDrunkML ?? 0) - (a.live?.totalDrankML ?? a.live?.totalDrunkML ?? 0)));
             } else if (activeTab === 'pending') {
                 const reqs = await getPendingRequests(uid);
                 setPendingReqs(reqs);
@@ -43,7 +43,7 @@ export default function FriendsScreen() {
         if (!searchQuery.trim()) return;
         setLoading(true);
         try {
-            const results = await searchUsersByEmail(searchQuery.trim());
+            const results = await searchUsers(searchQuery.trim(), uid);
             setSearchResults(results);
         } catch(e) {}
         setLoading(false);
@@ -100,7 +100,7 @@ export default function FriendsScreen() {
                     keyExtractor={(item) => item.uid}
                     ListEmptyComponent={loading ? <ActivityIndicator color="#4FC3F7"/> : <Text style={styles.emptyText}>No friends yet.</Text>}
                     renderItem={({ item, index }) => {
-                        const ml = item.live?.totalDrunkMl ?? 0;
+                        const ml = item.live?.totalDrankML ?? item.live?.totalDrunkML ?? 0;
                         const pct = Math.min(ml / 2000, 1);
                         return (
                             <Pressable 
@@ -129,7 +129,7 @@ export default function FriendsScreen() {
                     <View style={styles.searchRow}>
                         <TextInput 
                             style={styles.searchInput}
-                            placeholder="Exact email..."
+                            placeholder="Email or @username..."
                             placeholderTextColor="#546E8A"
                             value={searchQuery}
                             onChangeText={setSearchQuery}
@@ -190,9 +190,9 @@ export default function FriendsScreen() {
                             <Text style={styles.modalTitle}>{selectedFriend?.displayName}'s Profile</Text>
                             
                             <View style={styles.statsCard}>
-                                <Text style={styles.statLine}>💧 Logged: {selectedFriend?.live?.totalDrunkMl ?? 0} mL</Text>
+                                <Text style={styles.statLine}>💧 Logged: {selectedFriend?.live?.totalDrankML ?? selectedFriend?.live?.totalDrunkML ?? 0} mL</Text>
                                 <Text style={styles.statLine}>🎯 Goal: 2000 mL</Text>
-                                <Text style={styles.statLine}>📊 Bar: {Math.round(Math.min((selectedFriend?.live?.totalDrunkMl ?? 0) / 2000, 1) * 100)}% Full</Text>
+                                <Text style={styles.statLine}>📊 Bar: {Math.round(Math.min((selectedFriend?.live?.totalDrankML ?? selectedFriend?.live?.totalDrunkML ?? 0) / 2000, 1) * 100)}% Full</Text>
                             </View>
 
                             <Text style={styles.reviewsTitle}>Recent Ratings</Text>

@@ -1,14 +1,92 @@
 // ─── 4. db.js — database helper layer ──────────────────────────
-import { get, onValue, push, ref, set } from 'firebase/database';
+import { get, onValue, push, ref, set, update } from 'firebase/database';
 import { db } from './firebase';
+/**
+ * Synchronize User Auth object cleanly to Database
+ */
+export async function syncUserProfile(user) {
+    if (!user) return;
+    const profileRef = ref(db, `users/${user.uid}/profile`);
+    console.log("Saving Auth Profile to path:", `users/${user.uid}/profile`);
+
+    const snap = await get(profileRef);
+    if (!snap.exists()) {
+        await set(profileRef, {
+            email: (user.email || "").toLowerCase().trim(),
+            displayName: user.displayName || "",
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        });
+    } else {
+        await update(profileRef, {
+            email: (user.email || "").toLowerCase().trim(),
+            updatedAt: Date.now()
+        });
+    }
+}
+
+/**
+ * Queries the specific mapping index to prove ownership
+ */
+export async function checkUsernameExists(username) {
+    const un = username.toLowerCase().trim();
+    const snap = await get(ref(db, `usernames/${un}`));
+    return snap.exists();
+}
+
+/**
+ * Configure explicit Username bindings securely
+ */
+export async function setUsername(uid, username, displayName, email) {
+    const unLower = username.toLowerCase().trim();
+    const valid = /^[a-zA-Z0-9_]{3,20}$/.test(username);
+    if (!valid) throw new Error("Username must be between 3-20 characters and contain no spaces or special symbols.");
+    
+    // Check collision explicitly
+    const taken = await checkUsernameExists(unLower);
+    if (taken) throw new Error("Username is already taken.");
+
+    // Format Data
+    const updates = {
+        username: username.trim(),
+        usernameLower: unLower,
+        updatedAt: Date.now()
+    };
+    if (displayName) updates.displayName = displayName;
+    if (email) updates.email = email.toLowerCase().trim();
+    
+    await update(ref(db, `users/${uid}/profile`), updates);
+    
+    // Claim string uniquely across Global Index
+    await set(ref(db, `usernames/${unLower}`), uid);
+}
+
 /**
  * Subscribe to live coaster data for a user.
  * Calls callback(data) whenever ESP32 writes a new reading.
  */
 export function subscribeToLive(uid, callback) {
     const liveRef = ref(db, `users/${uid}/live`);
-    return onValue(liveRef, (snap) => callback(snap.val()));
-    // returns the unsubscribe function — call it in useEffect cleanup
+    return onValue(liveRef, async (snap) => {
+        const val = snap.val();
+        if (val) {
+            // DB Migration Guard: Legacy keys
+            if (val.totalDrunkMl !== undefined && val.totalDrankML === undefined) {
+               console.log(`[MIGRATION INITIATED] Copying legacy totalDrunkMl (${val.totalDrunkMl}) to totalDrankML for user: ${uid}`);
+               await update(liveRef, { 
+                   totalDrankML: val.totalDrunkMl, 
+                   totalDrunkMl: null 
+               });
+               return; // Next DB tick will parse the fresh node correctly
+            }
+            
+            // Runtime dynamic fallback
+            if (val.totalDrankML === undefined && val.totalDrunkMl !== undefined) {
+               val.totalDrankML = val.totalDrunkMl;
+            }
+        }
+        callback(val);
+    });
 }
 
 /**
@@ -108,22 +186,61 @@ export async function addReviewForStation(stationId, rating, comment, userId) {
 }
 
 /**
- * Search users by exact email across the system.
+ * Search users dynamically by username OR email.
  */
-export async function searchUsersByEmail(emailStr) {
-    if (!emailStr) return [];
-    const usersSnap = await get(ref(db, 'users'));
-    if (!usersSnap.exists()) return [];
+export async function searchUsers(queryStr, currentUid) {
+    if (!queryStr) return [];
+    const q = queryStr.toLowerCase().trim();
+    console.log(`[SEARCH] Querying database: ${q}`);
     
-    const usersObj = usersSnap.val();
     const matches = [];
-    Object.keys(usersObj).forEach(uid => {
-        const profile = usersObj[uid].profile || {};
-        const userEmail = profile.email || usersObj[uid].email || ""; // accommodate loose structuring
-        if (userEmail.toLowerCase() === emailStr.toLowerCase()) {
-            matches.push({ uid, displayName: profile.displayName || "Unknown", email: userEmail });
+
+    // A real email has text on both sides of @; a bare @username does not.
+    const isEmail = /^[^\s@]+@[^\s@]+/.test(q);
+
+    if (isEmail) {
+        const usersSnap = await get(ref(db, 'users'));
+        if (!usersSnap.exists()) return [];
+
+        const usersObj = usersSnap.val();
+        Object.keys(usersObj).forEach(uid => {
+            if (uid === currentUid) return;
+
+            const profile = usersObj[uid].profile || {};
+            const userEmail = profile.email || usersObj[uid].email || "";
+            if (userEmail.toLowerCase().trim() === q) {
+                matches.push({
+                    uid,
+                    displayName: profile.displayName || "Unknown",
+                    email: userEmail,
+                    username: profile.username || ""
+                });
+            }
+        });
+    } else {
+        // Strip a leading @ so "@johndoe" and "johndoe" both resolve correctly.
+        const usernameQuery = q.startsWith('@') ? q.slice(1) : q;
+
+        // Fast O(1) index lookup
+        const indexSnap = await get(ref(db, `usernames/${usernameQuery}`));
+        if (indexSnap.exists()) {
+            const matchUid = indexSnap.val();
+            if (matchUid !== currentUid) {
+                const profileSnap = await get(ref(db, `users/${matchUid}/profile`));
+                if (profileSnap.exists()) {
+                    const profile = profileSnap.val();
+                    matches.push({
+                        uid: matchUid,
+                        displayName: profile.displayName || "Unknown",
+                        email: profile.email || "",
+                        username: profile.username || usernameQuery
+                    });
+                }
+            }
         }
-    });
+    }
+
+    console.log(`[SEARCH] Found matches:`, matches);
     return matches;
 }
 

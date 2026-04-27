@@ -31,17 +31,17 @@ export default function HomeScreen() {
     if (!uid) return;
     const unsub = subscribeToLive(uid, (data) => {
       setLive(data);
-      const pct = Math.min((data?.totalDrunkMl ?? 0) / DAILY_GOAL_ML, 1);
+      const pct = Math.min((data?.totalDrankML ?? data?.totalDrunkML ?? 0) / DAILY_GOAL_ML, 1);
       Animated.spring(fillAnim, { toValue: pct, useNativeDriver: false }).start();
     });
     getHistory(uid, 7).then(setHistory);
     return () => unsub();
   }, [uid]);
 
-  const drunkMl   = live?.totalDrunkMl ?? 0;
-  const pct       = Math.min(drunkMl / DAILY_GOAL_ML, 1);
+  const drankMl   = live?.totalDrankML ?? live?.totalDrunkML ?? 0;
+  const pct       = Math.min(drankMl / DAILY_GOAL_ML, 1);
   const plant     = getPlantStage(pct);
-  const remaining = Math.max(0, DAILY_GOAL_ML - drunkMl);
+  const remaining = Math.max(0, DAILY_GOAL_ML - drankMl);
 
   const fillHeight = fillAnim.interpolate({
     inputRange:  [0, 1],
@@ -73,7 +73,7 @@ export default function HomeScreen() {
 
         {/* Stats row */}
         <View style={styles.statsRow}>
-          <StatCard label="Consumed"  value={`${drunkMl} mL`}      color="#4FC3F7"/>
+          <StatCard label="Consumed"  value={`${drankMl} mL`}      color="#4FC3F7"/>
           <StatCard label="Goal"      value={`${DAILY_GOAL_ML} mL`} color="#546E8A"/>
           <StatCard label="Remaining" value={`${remaining} mL`}    color="#F06292"/>
         </View>
