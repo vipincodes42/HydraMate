@@ -92,7 +92,7 @@ export default function RootLayout() {
         <Stack.Screen name="login"  options={{ headerShown: false }} />
         <Stack.Screen name="modal"  options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* Legacy User Intercept Modal */}
       <Modal visible={needsUsername && !!user && segments[0] !== 'login' && !isBrandNew} animationType="slide" transparent>

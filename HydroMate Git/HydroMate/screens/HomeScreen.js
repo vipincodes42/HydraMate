@@ -1,170 +1,232 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useRef, useState } from 'react';
 import {
     Animated,
-    Dimensions, ScrollView,
+    Image,
+    ScrollView,
     StyleSheet,
     Text,
     View,
 } from 'react-native';
-import { getHistory, subscribeToLive } from '../db';
+import { getTodayReadings, subscribeToLive } from '../db';
 import { auth } from '../firebase';
 
-const { width } = Dimensions.get('window');
 const DAILY_GOAL_ML = 2000;
 
-function getPlantStage(pct) {
-  if (pct < 0.15) return { emoji: '🌱', label: 'Seedling',   color: '#8BC34A' };
-  if (pct < 0.35) return { emoji: '🌿', label: 'Sprouting',  color: '#66BB6A' };
-  if (pct < 0.60) return { emoji: '🪴', label: 'Growing',    color: '#43A047' };
-  if (pct < 0.85) return { emoji: '🌳', label: 'Flourishing',color: '#2E7D32' };
-  return               { emoji: '🌻', label: 'Thriving!',    color: '#F9A825' };
+const PLANT_IMAGES = [
+    require('../assets/images/plantlvl1.png'),
+    require('../assets/images/plantlvl2.png'),
+    require('../assets/images/plantlvl3.png'),
+    require('../assets/images/plantlvl4.png'),
+    require('../assets/images/plantlvl5.png'),
+    require('../assets/images/plantlvl6.png'),
+];
+
+function getPlantImage(pct) {
+    if (pct === 0)        return PLANT_IMAGES[0];
+    if (pct <= 0.20)      return PLANT_IMAGES[1];
+    if (pct <= 0.40)      return PLANT_IMAGES[2];
+    if (pct <= 0.60)      return PLANT_IMAGES[3];
+    if (pct <= 0.80)      return PLANT_IMAGES[4];
+    return PLANT_IMAGES[5];
+}
+
+function getGreeting() {
+    const h = new Date().getHours();
+    if (h < 12) return 'good morning';
+    if (h < 17) return 'good afternoon';
+    return 'good evening';
+}
+
+function formatTime(ts) {
+    return new Date(ts)
+        .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+        .toLowerCase();
 }
 
 export default function HomeScreen() {
-  const [live, setLive]       = useState(null);
-  const [history, setHistory] = useState([]);
-  const uid = auth.currentUser?.uid;
-  const fillAnim = useRef(new Animated.Value(0)).current;
+    const [live, setLive] = useState(null);
+    const [readings, setReadings] = useState([]);
+    const uid = auth.currentUser?.uid;
+    const displayName = auth.currentUser?.displayName || 'there';
+    const fillAnim = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    if (!uid) return;
-    const unsub = subscribeToLive(uid, (data) => {
-      setLive(data);
-      const pct = Math.min((data?.totalDrankML ?? data?.totalDrunkML ?? 0) / DAILY_GOAL_ML, 1);
-      Animated.spring(fillAnim, { toValue: pct, useNativeDriver: false }).start();
+    useEffect(() => {
+        if (!uid) return;
+        const unsub = subscribeToLive(uid, (data) => {
+            setLive(data);
+            const pct = Math.min(
+                (data?.totalDrankML ?? data?.totalDrunkML ?? 0) / DAILY_GOAL_ML,
+                1
+            );
+            Animated.spring(fillAnim, { toValue: pct, useNativeDriver: false }).start();
+        });
+        getTodayReadings(uid).then(setReadings);
+        return () => unsub();
+    }, [uid]);
+
+    const drankMl = live?.totalDrankML ?? live?.totalDrunkML ?? 0;
+    const pct = Math.min(drankMl / DAILY_GOAL_ML, 1);
+    const weightG = live?.weightG;
+
+    const fillWidth = fillAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0%', '100%'],
     });
-    getHistory(uid, 7).then(setHistory);
-    return () => unsub();
-  }, [uid]);
 
-  const drankMl   = live?.totalDrankML ?? live?.totalDrunkML ?? 0;
-  const pct       = Math.min(drankMl / DAILY_GOAL_ML, 1);
-  const plant     = getPlantStage(pct);
-  const remaining = Math.max(0, DAILY_GOAL_ML - drankMl);
+    return (
+        <View style={styles.container}>
+            <ScrollView
+                contentContainerStyle={styles.scroll}
+                showsVerticalScrollIndicator={false}
+            >
+                {/* Header */}
+                <Text style={styles.greeting}>{getGreeting()}, {displayName}!</Text>
+                <Text style={styles.title}>your plant is growing!</Text>
 
-  const fillHeight = fillAnim.interpolate({
-    inputRange:  [0, 1],
-    outputRange: ['0%', '100%'],
-  });
+                {/* Main hydration card */}
+                <View style={styles.mainCard}>
+                    <Image source={getPlantImage(pct)} style={styles.plantImage} resizeMode="contain" />
 
-  return (
-    <LinearGradient colors={['#0A1628', '#0D2137', '#0A1628']} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+                    <Text style={styles.hydrationLabel}>today's hydration</Text>
+                    <View style={styles.hydrationRow}>
+                        <Text style={styles.hydrationAmount}>{drankMl}ml</Text>
+                        <Text style={styles.hydrationGoal}> / {DAILY_GOAL_ML}ml</Text>
+                    </View>
 
-        <Text style={styles.greeting}>HydroMate 💧</Text>
-        <Text style={styles.date}>
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-        </Text>
+                    <View style={styles.progressTrack}>
+                        <Animated.View style={[styles.progressFill, { width: fillWidth }]} />
+                    </View>
 
-        {/* Plant avatar */}
-        <View style={styles.plantContainer}>
-          <Text style={styles.plantEmoji}>{plant.emoji}</Text>
-          <Text style={[styles.plantLabel, { color: plant.color }]}>{plant.label}</Text>
-        </View>
-
-        {/* Water bottle progress */}
-        <View style={styles.bottleWrap}>
-          <View style={styles.bottleShell}>
-            <Animated.View style={[styles.bottleFill, { height: fillHeight }]}/>
-          </View>
-          <Text style={styles.bottleLabel}>{Math.round(pct * 100)}%</Text>
-        </View>
-
-        {/* Stats row */}
-        <View style={styles.statsRow}>
-          <StatCard label="Consumed"  value={`${drankMl} mL`}      color="#4FC3F7"/>
-          <StatCard label="Goal"      value={`${DAILY_GOAL_ML} mL`} color="#546E8A"/>
-          <StatCard label="Remaining" value={`${remaining} mL`}    color="#F06292"/>
-        </View>
-
-        {/* Alert banner */}
-        {live?.alertActive && (
-          <View style={styles.alertBanner}>
-            <Text style={styles.alertText}>💧 Time to drink! Your coaster is pulsing blue.</Text>
-          </View>
-        )}
-
-        {/* Live coaster data */}
-        <View style={styles.coasterCard}>
-          <Text style={styles.cardTitle}>Coaster Live</Text>
-          <Text style={styles.cardSub}>
-            Bottle weight: {live?.weightG?.toFixed(0) ?? '--'} g
-          </Text>
-          <View style={[styles.dot, { backgroundColor: live ? '#4FC3F7' : '#546E8A' }]}/>
-        </View>
-
-        {/* 7-day history */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Last 7 Days</Text>
-          <View style={styles.chartRow}>
-            {history.map((day, i) => {
-              const h     = Math.max(4, (day.ml / DAILY_GOAL_ML) * 80);
-              const label = day.date.slice(6);
-              return (
-                <View key={i} style={styles.barWrap}>
-                  <Text style={styles.barLabel}>{day.ml > 0 ? `${day.ml}` : ''}</Text>
-                  <View style={[styles.bar, {
-                    height: h,
-                    backgroundColor: day.ml >= DAILY_GOAL_ML ? '#4FC3F7' : '#1E3A5F'
-                  }]}/>
-                  <Text style={styles.barDate}>{label}</Text>
+                    {/* Bottle level card */}
+                    <View style={styles.bottleCard}>
+                        <View>
+                            <Text style={styles.bottleLabel}>bottle level</Text>
+                            <Text style={styles.bottleWeight}>
+                                {weightG != null ? `${Math.round(weightG)}g remaining` : '-- g remaining'}
+                            </Text>
+                        </View>
+                        <View style={[
+                            styles.bottleDot,
+                            { backgroundColor: weightG != null && weightG > 100 ? '#6BAD6A' : '#CCCCCC' }
+                        ]} />
+                    </View>
                 </View>
-              );
-            })}
-          </View>
+
+                {/* Hydration alert */}
+                {live?.alertActive && (
+                    <View style={styles.alertBanner}>
+                        <Text style={styles.alertText}>Time to drink! Your coaster is pulsing.</Text>
+                    </View>
+                )}
+
+                {/* Today's activity */}
+                <Text style={styles.sectionTitle}>today's activity</Text>
+                <View style={styles.activityCard}>
+                    {readings.length === 0 ? (
+                        <Text style={styles.emptyText}>No activity logged yet today.</Text>
+                    ) : (
+                        readings.map((r, i) => (
+                            <View
+                                key={i}
+                                style={[
+                                    styles.activityRow,
+                                    i < readings.length - 1 && styles.activityDivider,
+                                ]}
+                            >
+                                <View style={styles.activityIcon}>
+                                    <Text style={styles.activityIconText}>💧</Text>
+                                </View>
+                                <View>
+                                    <Text style={styles.activityMain}>{r.ml}ml consumed</Text>
+                                    <Text style={styles.activityTime}>{formatTime(r.ts)}</Text>
+                                </View>
+                            </View>
+                        ))
+                    )}
+                </View>
+            </ScrollView>
         </View>
-
-      </ScrollView>
-    </LinearGradient>
-  );
-}
-
-function StatCard({ label, value, color }) {
-  return (
-    <View style={styles.statCard}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
+    );
 }
 
 const styles = StyleSheet.create({
-  container:      { flex: 1 },
-  scroll:         { padding: 20, paddingTop: 60, paddingBottom: 40 },
-  greeting:       { color: '#fff', fontSize: 28, fontWeight: '800', letterSpacing: 1 },
-  date:           { color: '#546E8A', fontSize: 14, marginBottom: 24 },
+    container: { flex: 1, backgroundColor: '#F5F0EB' },
+    scroll: { padding: 24, paddingTop: 64, paddingBottom: 40 },
 
-  plantContainer: { alignItems: 'center', marginBottom: 20 },
-  plantEmoji:     { fontSize: 80 },
-  plantLabel:     { fontSize: 18, fontWeight: '700', marginTop: 8 },
+    greeting: { color: '#9E9E9E', fontSize: 15, marginBottom: 4 },
+    title: { color: '#2C2C2C', fontSize: 26, fontWeight: '800', marginBottom: 24 },
 
-  bottleWrap:     { alignItems: 'center', marginBottom: 24 },
-  bottleShell:    { width: 60, height: 140, borderRadius: 8, borderWidth: 2,
-                    borderColor: '#4FC3F7', overflow: 'hidden', justifyContent: 'flex-end' },
-  bottleFill:     { width: '100%', borderRadius: 6, backgroundColor: '#4FC3F7' },
-  bottleLabel:    { color: '#fff', marginTop: 8, fontSize: 18, fontWeight: '700' },
+    mainCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        marginBottom: 24,
+        shadowColor: '#000',
+        shadowOpacity: 0.06,
+        shadowRadius: 12,
+        elevation: 3,
+    },
+    plantImage: { width: 140, height: 140, marginBottom: 16, marginTop: 4 },
 
-  statsRow:       { flexDirection: 'row', gap: 10, marginBottom: 20 },
-  statCard:       { flex: 1, backgroundColor: '#0D2137', borderRadius: 12,
-                    padding: 14, alignItems: 'center' },
-  statValue:      { fontSize: 16, fontWeight: '700' },
-  statLabel:      { color: '#546E8A', fontSize: 11, marginTop: 4 },
+    hydrationLabel: { color: '#9E9E9E', fontSize: 14, marginBottom: 6 },
+    hydrationRow: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 16 },
+    hydrationAmount: { color: '#2C2C2C', fontSize: 38, fontWeight: '800' },
+    hydrationGoal: { color: '#9E9E9E', fontSize: 20, fontWeight: '400' },
 
-  alertBanner:    { backgroundColor: '#1565C0', borderRadius: 10, padding: 14, marginBottom: 16 },
-  alertText:      { color: '#fff', textAlign: 'center', fontWeight: '600' },
+    progressTrack: {
+        width: '100%', height: 10, borderRadius: 5,
+        backgroundColor: '#E4DDD4', marginBottom: 16, overflow: 'hidden',
+    },
+    progressFill: { height: '100%', borderRadius: 5, backgroundColor: '#6BAD6A' },
 
-  coasterCard:    { backgroundColor: '#0D2137', borderRadius: 12, padding: 16,
-                    marginBottom: 20, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cardTitle:      { color: '#fff', fontWeight: '700', flex: 1 },
-  cardSub:        { color: '#546E8A', fontSize: 13 },
-  dot:            { width: 10, height: 10, borderRadius: 5 },
+    bottleCard: {
+        width: '100%',
+        backgroundColor: '#EBF5E6',
+        borderRadius: 16,
+        padding: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    bottleLabel: { color: '#9E9E9E', fontSize: 12, marginBottom: 4 },
+    bottleWeight: { color: '#2C2C2C', fontSize: 17, fontWeight: '700' },
+    bottleDot: { width: 44, height: 44, borderRadius: 22 },
 
-  section:        { marginBottom: 20 },
-  sectionTitle:   { color: '#fff', fontWeight: '700', marginBottom: 12 },
-  chartRow:       { flexDirection: 'row', alignItems: 'flex-end', gap: 8, height: 100 },
-  barWrap:        { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
-  bar:            { width: '100%', borderRadius: 4 },
-  barLabel:       { color: '#4FC3F7', fontSize: 9, marginBottom: 2 },
-  barDate:        { color: '#546E8A', fontSize: 10, marginTop: 4 },
+    alertBanner: {
+        backgroundColor: '#FFF9C4',
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 20,
+    },
+    alertText: { color: '#7A6000', textAlign: 'center', fontWeight: '600' },
+
+    sectionTitle: { color: '#2C2C2C', fontSize: 18, fontWeight: '700', marginBottom: 14 },
+
+    activityCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        paddingVertical: 4,
+        shadowColor: '#000',
+        shadowOpacity: 0.06,
+        shadowRadius: 12,
+        elevation: 3,
+    },
+    activityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        gap: 14,
+    },
+    activityDivider: { borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+    activityIcon: {
+        width: 42, height: 42, borderRadius: 21,
+        backgroundColor: '#EBF5E6',
+        alignItems: 'center', justifyContent: 'center',
+    },
+    activityIconText: { fontSize: 18 },
+    activityMain: { color: '#2C2C2C', fontSize: 15, fontWeight: '600' },
+    activityTime: { color: '#9E9E9E', fontSize: 12, marginTop: 2 },
+    emptyText: { color: '#9E9E9E', textAlign: 'center', padding: 24, fontStyle: 'italic' },
 });

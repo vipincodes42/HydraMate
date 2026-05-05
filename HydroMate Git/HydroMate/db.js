@@ -334,6 +334,16 @@ export async function getUserFriendsList(uid) {
 }
 
 /**
+ * Get individual sip readings for today's activity feed.
+ */
+export async function getTodayReadings(uid) {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const snap = await get(ref(db, `users/${uid}/history/${today}/readings`));
+    if (!snap.exists()) return [];
+    return Object.values(snap.val()).sort((a, b) => a.ts - b.ts);
+}
+
+/**
  * Safely scrape specific user's historical reviews. Note: Doing this unindexed is
  * standard for standard Firebase DB MVP states on a lightweight corpus.
  */
