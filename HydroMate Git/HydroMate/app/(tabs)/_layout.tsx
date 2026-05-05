@@ -1,38 +1,49 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import React from 'react';
-
 import { HapticTab } from '../../components/haptic-tab';
 
 export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarStyle:             { backgroundColor: '#0A1628', borderTopColor: '#1E3A5F' },
-        tabBarActiveTintColor:   '#4FC3F7',
-        tabBarInactiveTintColor: '#546E8A',
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#EEEEEE',
+          borderTopWidth: 1,
+          height: 60,
+        },
+        tabBarActiveTintColor: '#6BAD6A',
+        tabBarInactiveTintColor: '#AAAAAA',
+        tabBarLabelStyle: { fontSize: 11, marginBottom: 4 },
         headerShown: false,
         tabBarButton: HapticTab,
       }}>
       <Tabs.Screen
         name="index"
         options={{
-          tabBarLabel: '💧 Today',
-          // Optionally, disable default icons since the App.js uses emojis in the labels
-          tabBarIconStyle: { display: 'none' }, // Hides the placeholder icon area cleanly
+          tabBarLabel: 'home',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home-outline" size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="friends"
         options={{
-          tabBarLabel: '👥 Friends',
-          tabBarIconStyle: { display: 'none' },
+          tabBarLabel: 'friends',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="people-outline" size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="map"
         options={{
-          tabBarLabel: '🗺 Stations',
-          tabBarIconStyle: { display: 'none' },
+          tabBarLabel: 'map',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="location-outline" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>

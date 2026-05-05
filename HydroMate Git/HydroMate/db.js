@@ -66,25 +66,38 @@ export async function setUsername(uid, username, displayName, email) {
  * Calls callback(data) whenever ESP32 writes a new reading.
  */
 export function subscribeToLive(uid, callback) {
-    const liveRef = ref(db, `users/${uid}/live`);
+    const path = `users/${uid}/live`;
+    const liveRef = ref(db, path);
+
+    console.log(`[LIVE] Subscribing — UID: ${uid} | path: ${path}`);
+
     return onValue(liveRef, async (snap) => {
-        const val = snap.val();
-        if (val) {
-            // DB Migration Guard: Legacy keys
-            if (val.totalDrunkMl !== undefined && val.totalDrankML === undefined) {
-               console.log(`[MIGRATION INITIATED] Copying legacy totalDrunkMl (${val.totalDrunkMl}) to totalDrankML for user: ${uid}`);
-               await update(liveRef, { 
-                   totalDrankML: val.totalDrunkMl, 
-                   totalDrunkMl: null 
-               });
-               return; // Next DB tick will parse the fresh node correctly
-            }
-            
-            // Runtime dynamic fallback
-            if (val.totalDrankML === undefined && val.totalDrunkMl !== undefined) {
-               val.totalDrankML = val.totalDrunkMl;
-            }
+        console.log(`[LIVE] Snapshot received — path: ${path} | exists: ${snap.exists()}`);
+
+        // Create default live node if the user has no live data yet
+        if (!snap.exists()) {
+            console.log(`[LIVE] No live node for UID: ${uid} — writing defaults`);
+            await set(liveRef, { alertActive: false, totalDrankML: 0, weightG: 0 });
+            return; // onValue fires again immediately with the new data
         }
+
+        const val = snap.val();
+        console.log(`[LIVE] Data:`, JSON.stringify(val));
+
+        // DB Migration Guard: rename totalDrunkMl / totalDrunkML → totalDrankML
+        const hasLegacyMl = val.totalDrunkMl !== undefined;   // old lowercase-l key
+        const hasLegacyML = val.totalDrunkML !== undefined;   // old uppercase-ML key
+        if ((hasLegacyMl || hasLegacyML) && val.totalDrankML === undefined) {
+            const legacyValue = val.totalDrunkMl ?? val.totalDrunkML;
+            console.log(`[MIGRATION] Renaming legacy field → totalDrankML (value: ${legacyValue}) for UID: ${uid}`);
+            await update(liveRef, {
+                totalDrankML: legacyValue,
+                totalDrunkMl: null,
+                totalDrunkML: null,
+            });
+            return; // onValue fires again with the clean key
+        }
+
         callback(val);
     });
 }
@@ -123,7 +136,7 @@ export async function getHistory(uid, days = 7) {
  * Get friend live data (for friend-tracking screen).
  */
 export async function getFriendsData(uid) {
-    const friendsSnap = await get(ref(db, `users/${uid}/friends`));
+    const friendsSnap = await get(ref(db, `friends/${uid}`));
     const friendUids = Object.keys(friendsSnap.val() ?? {});
     const data = await Promise.all(
         friendUids.map(async (fuid) => {
@@ -252,7 +265,7 @@ export async function sendFriendRequest(senderId, receiverId) {
     if (senderId === receiverId) throw new Error("Cannot add yourself");
     
     // Safety check if already friends
-    const checkSnap = await get(ref(db, `users/${senderId}/friends/${receiverId}`));
+    const checkSnap = await get(ref(db, `friends/${senderId}/${receiverId}`));
     if (checkSnap.exists() && checkSnap.val() === true) {
         throw new Error("Already friends!");
     }
@@ -267,15 +280,38 @@ export async function sendFriendRequest(senderId, receiverId) {
 /**
  * Accept or reject an inbound Friend Request.
  */
-export async function respondToFriendRequest(myId, senderId, accept) {
-    const reqRef = ref(db, `friendRequests/${myId}/${senderId}`);
-    if (accept) {
-        // Create bilateral friend relationship
-        await set(ref(db, `users/${myId}/friends/${senderId}`), true);
-        await set(ref(db, `users/${senderId}/friends/${myId}`), true);
+export async function respondToFriendRequest(currentUserUid, senderUid, accept) {
+    console.log("[FRIEND] respondToFriendRequest called");
+    console.log("[FRIEND] currentUserUid (receiver):", currentUserUid);
+    console.log("[FRIEND] senderUid (requester):", senderUid);
+    console.log("[FRIEND] accept:", accept);
+
+    try {
+        if (accept) {
+            const path1 = `friends/${currentUserUid}/${senderUid}`;
+            const path2 = `friends/${senderUid}/${currentUserUid}`;
+            const path3 = `friendRequests/${currentUserUid}/${senderUid}`;
+
+            console.log("[FRIEND] Writing path:", path1, "→ true");
+            console.log("[FRIEND] Writing path:", path2, "→ true");
+            console.log("[FRIEND] Writing path:", path3, "→ null");
+
+            await update(ref(db), {
+                [path1]: true,
+                [path2]: true,
+                [path3]: null,
+            });
+        } else {
+            const path3 = `friendRequests/${currentUserUid}/${senderUid}`;
+            console.log("[FRIEND] Rejecting — removing path:", path3);
+            await set(ref(db, path3), null);
+        }
+
+        console.log("[FRIEND] respondToFriendRequest succeeded");
+    } catch (error) {
+        console.error("Accept request failed:", error.code, error.message);
+        throw error;
     }
-    // Remove the request node outright
-    await set(reqRef, null);
 }
 
 /**
@@ -305,9 +341,19 @@ export async function getPendingRequests(myId) {
  */
 export async function getUserFriendsList(uid) {
     if (!uid) return [];
-    const snap = await get(ref(db, `users/${uid}/friends`));
+    const snap = await get(ref(db, `friends/${uid}`));
     if (!snap.exists()) return [];
     return Object.keys(snap.val());
+}
+
+/**
+ * Get individual sip readings for today's activity feed.
+ */
+export async function getTodayReadings(uid) {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const snap = await get(ref(db, `users/${uid}/history/${today}/readings`));
+    if (!snap.exists()) return [];
+    return Object.values(snap.val()).sort((a, b) => a.ts - b.ts);
 }
 
 /**

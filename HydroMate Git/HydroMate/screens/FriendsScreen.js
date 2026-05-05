@@ -63,7 +63,8 @@ export default function FriendsScreen() {
             await respondToFriendRequest(uid, senderId, accept);
             loadData();
         } catch(e) {
-            alert("Error responding to request");
+            console.error("handleRespondReq error:", e?.code, e?.message);
+            alert(`Error responding to request: ${e?.message ?? e}`);
         }
     };
 
