@@ -1,3 +1,4 @@
+import { onAuthStateChanged } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
 import {
     Animated,
@@ -46,25 +47,35 @@ function formatTime(ts) {
 export default function HomeScreen() {
     const [live, setLive] = useState(null);
     const [readings, setReadings] = useState([]);
-    const uid = auth.currentUser?.uid;
-    const displayName = auth.currentUser?.displayName || 'there';
+    const [uid, setUid] = useState(auth.currentUser?.uid ?? null);
+    const [displayName, setDisplayName] = useState(auth.currentUser?.displayName || 'there');
     const fillAnim = useRef(new Animated.Value(0)).current;
+
+    // Reactively track the signed-in user so the subscription always uses the real UID.
+    useEffect(() => {
+        const unsub = onAuthStateChanged(auth, (user) => {
+            const newUid = user?.uid ?? null;
+            console.log(`[HOME] Auth state changed — UID: ${newUid}`);
+            setUid(newUid);
+            setDisplayName(user?.displayName || 'there');
+        });
+        return () => unsub();
+    }, []);
 
     useEffect(() => {
         if (!uid) return;
+        console.log(`[HOME] Setting up live subscription — UID: ${uid} | path: users/${uid}/live`);
         const unsub = subscribeToLive(uid, (data) => {
+            console.log(`[HOME] Live update received — UID: ${uid} | data:`, JSON.stringify(data));
             setLive(data);
-            const pct = Math.min(
-                (data?.totalDrankML ?? data?.totalDrunkML ?? 0) / DAILY_GOAL_ML,
-                1
-            );
+            const pct = Math.min((data?.totalDrankML ?? 0) / DAILY_GOAL_ML, 1);
             Animated.spring(fillAnim, { toValue: pct, useNativeDriver: false }).start();
         });
         getTodayReadings(uid).then(setReadings);
         return () => unsub();
     }, [uid]);
 
-    const drankMl = live?.totalDrankML ?? live?.totalDrunkML ?? 0;
+    const drankMl = live?.totalDrankML ?? 0;
     const pct = Math.min(drankMl / DAILY_GOAL_ML, 1);
     const weightG = live?.weightG;
 

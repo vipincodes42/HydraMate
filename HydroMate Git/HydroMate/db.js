@@ -66,25 +66,38 @@ export async function setUsername(uid, username, displayName, email) {
  * Calls callback(data) whenever ESP32 writes a new reading.
  */
 export function subscribeToLive(uid, callback) {
-    const liveRef = ref(db, `users/${uid}/live`);
+    const path = `users/${uid}/live`;
+    const liveRef = ref(db, path);
+
+    console.log(`[LIVE] Subscribing — UID: ${uid} | path: ${path}`);
+
     return onValue(liveRef, async (snap) => {
-        const val = snap.val();
-        if (val) {
-            // DB Migration Guard: Legacy keys
-            if (val.totalDrunkMl !== undefined && val.totalDrankML === undefined) {
-               console.log(`[MIGRATION INITIATED] Copying legacy totalDrunkMl (${val.totalDrunkMl}) to totalDrankML for user: ${uid}`);
-               await update(liveRef, { 
-                   totalDrankML: val.totalDrunkMl, 
-                   totalDrunkMl: null 
-               });
-               return; // Next DB tick will parse the fresh node correctly
-            }
-            
-            // Runtime dynamic fallback
-            if (val.totalDrankML === undefined && val.totalDrunkMl !== undefined) {
-               val.totalDrankML = val.totalDrunkMl;
-            }
+        console.log(`[LIVE] Snapshot received — path: ${path} | exists: ${snap.exists()}`);
+
+        // Create default live node if the user has no live data yet
+        if (!snap.exists()) {
+            console.log(`[LIVE] No live node for UID: ${uid} — writing defaults`);
+            await set(liveRef, { alertActive: false, totalDrankML: 0, weightG: 0 });
+            return; // onValue fires again immediately with the new data
         }
+
+        const val = snap.val();
+        console.log(`[LIVE] Data:`, JSON.stringify(val));
+
+        // DB Migration Guard: rename totalDrunkMl / totalDrunkML → totalDrankML
+        const hasLegacyMl = val.totalDrunkMl !== undefined;   // old lowercase-l key
+        const hasLegacyML = val.totalDrunkML !== undefined;   // old uppercase-ML key
+        if ((hasLegacyMl || hasLegacyML) && val.totalDrankML === undefined) {
+            const legacyValue = val.totalDrunkMl ?? val.totalDrunkML;
+            console.log(`[MIGRATION] Renaming legacy field → totalDrankML (value: ${legacyValue}) for UID: ${uid}`);
+            await update(liveRef, {
+                totalDrankML: legacyValue,
+                totalDrunkMl: null,
+                totalDrunkML: null,
+            });
+            return; // onValue fires again with the clean key
+        }
+
         callback(val);
     });
 }
