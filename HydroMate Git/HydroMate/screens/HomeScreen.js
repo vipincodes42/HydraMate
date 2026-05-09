@@ -75,7 +75,7 @@ export default function HomeScreen() {
         return () => unsub();
     }, [uid]);
 
-    const drankMl = live?.totalDrankML ?? 0;
+    const drankMl = Math.floor(live?.totalDrankML ?? 0);
     const pct = Math.min(drankMl / DAILY_GOAL_ML, 1);
     const weightG = live?.weightG;
 
