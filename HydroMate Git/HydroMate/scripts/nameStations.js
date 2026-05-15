@@ -1,11 +1,20 @@
-const fs = require("fs");
+#!/usr/bin/env node
+/**
+ * nameStations.js
+ *
+ * Reads data/refillStations.js, matches each station to the nearest known
+ * UCSD campus location via haversine distance, and writes meaningful names
+ * back to the same file. IDs and coordinates are never changed.
+ *
+ * Run from repo root:
+ *   node scripts/nameStations.js
+ */
 
-// ─── ArcGIS source ────────────────────────────────────────────────────────────
-const ITEM_ID = "124bd539314e486196290a6dd743cded";
+const fs = require('fs');
+const path = require('path');
 
-// ─── Curated UCSD campus locations for name matching ─────────────────────────
-// The ArcGIS source has no name fields (it is a Survey123 status layer).
-// Names are derived by nearest-location matching against this list.
+// ─── Curated UCSD campus locations ───────────────────────────────────────────
+// Source: UCSD campus maps (maps.ucsd.edu) + ArcGIS public layers.
 // Add or adjust entries here to improve future matching accuracy.
 const UCSD_LOCATIONS = [
   // Dining & Cafes
@@ -63,11 +72,11 @@ const UCSD_LOCATIONS = [
   { name: 'ERC Great Hall',             lat: 32.8856, lng: -117.2394 },
 ];
 
+// Stations further than this from every known location get a fallback name
 const THRESHOLD_M = 250;
 
 // Manual overrides — take precedence over nearest-match results.
-// Keys are station IDs (1-based index order from ArcGIS fetch).
-// Update here when correcting script-assigned names.
+// Keys are station IDs. Update here when correcting script-assigned names.
 const MANUAL_OVERRIDES = {
   1:  'Warren - Warren Lecture Hall',
   2:  'Pepper Canyon East Apartments',
@@ -85,7 +94,7 @@ const MANUAL_OVERRIDES = {
   15: 'Sixth - Catalyst',
 };
 
-// ─── Naming helpers ───────────────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
 function toRad(deg) { return (deg * Math.PI) / 180; }
 
 function haversineM(lat1, lng1, lat2, lng2) {
@@ -105,98 +114,58 @@ function stripPrefixes(raw) {
     .trim();
 }
 
-function assignName(lat, lng, fallbackId) {
+function findNearest(station) {
   let nearest = null;
   let nearestDist = Infinity;
   for (const loc of UCSD_LOCATIONS) {
-    const d = haversineM(lat, lng, loc.lat, loc.lng);
+    const d = haversineM(station.latitude, station.longitude, loc.lat, loc.lng);
     if (d < nearestDist) { nearestDist = d; nearest = loc; }
   }
-
-  const ok = nearestDist <= THRESHOLD_M;
-  console.log(`  Nearest: "${nearest?.name}" @ ${nearestDist.toFixed(1)}m → ${ok ? '✓ ' + stripPrefixes(nearest.name) : '✗ fallback'}`);
-
-  return ok
-    ? stripPrefixes(nearest.name)
-    : `Water Refill Station near ${nearest.name}`;
+  return { nearest, distM: nearestDist };
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-async function main() {
-  const itemDataUrl = `https://www.arcgis.com/sharing/rest/content/items/${ITEM_ID}/data?f=json`;
+function main() {
+  const dataPath = path.resolve(__dirname, '../data/refillStations.js');
+  const raw = fs.readFileSync(dataPath, 'utf8');
 
-  const itemRes = await fetch(itemDataUrl);
-  const itemData = await itemRes.json();
+  const arrayMatch = raw.match(/export\s+const\s+refillStations\s*=\s*(\[[\s\S]*?\]);/);
+  if (!arrayMatch) throw new Error('Could not parse refillStations from data/refillStations.js');
+  const stations = JSON.parse(arrayMatch[1]);
 
-  const layers = itemData.operationalLayers || [];
+  console.log(`\nLoaded ${stations.length} stations. Matching against ${UCSD_LOCATIONS.length} known locations (threshold: ${THRESHOLD_M}m)\n`);
+  console.log('═'.repeat(70));
 
-  console.log("Layers found:");
-  layers.forEach((layer, i) => {
-    console.log(`  ${i}: ${layer.title}`);
+  let accepted = 0;
+  let rejected = 0;
+
+  const updated = stations.map((station) => {
+    const { nearest, distM } = findNearest(station);
+    const ok = distM <= THRESHOLD_M;
+
+    const matchedName = ok
+      ? stripPrefixes(nearest.name)
+      : `Water Refill Station near ${nearest.name}`;
+
+    const finalName = MANUAL_OVERRIDES[station.id] ?? matchedName;
+    const overridden = finalName !== matchedName;
+
+    console.log(`\nStation ${String(station.id).padStart(2)}`);
+    console.log(`  Original : "${station.name}"`);
+    console.log(`  Coords   : (${station.latitude.toFixed(6)}, ${station.longitude.toFixed(6)})`);
+    console.log(`  Nearest  : "${nearest?.name}" @ ${distM.toFixed(1)}m`);
+    console.log(`  Result   : ${ok ? '✓ ACCEPTED' : '✗ REJECTED'} → "${matchedName}"${overridden ? ` (overridden → "${finalName}")` : ''}`);
+
+    if (ok) accepted++; else rejected++;
+    return { ...station, name: finalName };
   });
 
-  const refillLayer =
-    layers.find((layer) => layer.title?.toLowerCase().includes("water")) || layers[0];
+  console.log('\n' + '═'.repeat(70));
+  console.log(`\nSummary: ${accepted} named, ${rejected} used fallback (nearest-building label)\n`);
 
-  if (!refillLayer?.url) {
-    throw new Error("Could not find a FeatureServer layer URL.");
-  }
-
-  const queryUrl =
-    `${refillLayer.url}/query?` +
-    new URLSearchParams({
-      f: "json",
-      where: "1=1",
-      outFields: "*",
-      returnGeometry: "true",
-      outSR: "4326",
-    });
-
-  const queryRes = await fetch(queryUrl);
-  const queryData = await queryRes.json();
-
-  if (!queryData.features) {
-    console.log(queryData);
-    throw new Error("No features returned.");
-  }
-
-  console.log(`\nFetched ${queryData.features.length} stations. Matching names...\n`);
-
-  // NOTE: IDs are assigned by sort-stable index (1-N) to match the existing
-  // data/refillStations.js scheme. If you need to re-fetch without breaking
-  // existing Firebase reviews, run nameStations.js instead — it preserves IDs
-  // in-place by operating on the current file.
-  const stations = queryData.features.map((feature, index) => {
-    const geom = feature.geometry || {};
-    const lat = geom.y;
-    const lng = geom.x;
-    const id = index + 1;
-
-    console.log(`Station ${id} (${lat?.toFixed(5)}, ${lng?.toFixed(5)})`);
-    const matchedName = assignName(lat, lng, id);
-    const name = MANUAL_OVERRIDES[id] ?? matchedName;
-    if (name !== matchedName) {
-      console.log(`  Overridden → "${name}"`);
-    }
-
-    return {
-      id,
-      name,
-      latitude: lat,
-      longitude: lng,
-      description: "Water refill station",
-    };
-  });
-
-  const output = `export const refillStations = ${JSON.stringify(stations, null, 2)};\n`;
-
-  fs.mkdirSync("data", { recursive: true });
-  fs.writeFileSync("data/refillStations.js", output);
-
-  console.log(`\nSaved ${stations.length} stations to data/refillStations.js`);
+  const output = `export const refillStations = ${JSON.stringify(updated, null, 2)};\n`;
+  fs.writeFileSync(dataPath, output);
+  console.log(`Saved → data/refillStations.js`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main();

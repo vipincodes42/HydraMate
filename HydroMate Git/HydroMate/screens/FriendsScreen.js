@@ -4,7 +4,9 @@ import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Keyboard,
+    KeyboardAvoidingView,
     Modal,
+    Platform,
     Pressable,
     SafeAreaView,
     ScrollView,
@@ -254,39 +256,15 @@ export default function FriendsScreen() {
                     </View>
                 )}
 
-                {/* ── Suggested Friends ── */}
-                <Text style={styles.sectionLabel}>suggested friends</Text>
-                {searchResults.length > 0 ? (
-                    searchResults.map((item) => (
-                        <View key={item.uid} style={styles.suggestedRow}>
-                            <View style={styles.avatarCircle}>
-                                <Ionicons name="person-outline" size={18} color="#aaa" />
-                            </View>
-                            <View style={styles.suggestedInfo}>
-                                <Text style={styles.suggestedName}>{item.displayName}</Text>
-                                <Text style={styles.suggestedSub}>
-                                    {item.username ? `@${item.username}` : item.email}
-                                </Text>
-                            </View>
-                            <Pressable style={styles.addGreenBtn} onPress={() => handleSendReq(item.uid)}>
-                                <Text style={styles.addGreenBtnText}>add</Text>
-                            </Pressable>
-                        </View>
-                    ))
-                ) : (
-                    <View style={styles.suggestedEmpty}>
-                        <Ionicons name="search-outline" size={20} color="#ccc" style={{ marginRight: 10 }} />
-                        <Text style={styles.suggestedEmptyText}>
-                            Tap <Text style={{ fontWeight: '700' }}>+</Text> to find friends by username or email
-                        </Text>
-                    </View>
-                )}
-
                 <View style={{ height: 24 }} />
             </ScrollView>
 
             {/* ── Add Friend Modal (bottom sheet) ── */}
             <Modal visible={showAddModal} animationType="slide" transparent>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={{ flex: 1 }}
+                >
                 <TouchableWithoutFeedback onPress={() => { setShowAddModal(false); Keyboard.dismiss(); }}>
                     <View style={styles.modalOverlay}>
                         <TouchableWithoutFeedback>
@@ -340,6 +318,7 @@ export default function FriendsScreen() {
                         </TouchableWithoutFeedback>
                     </View>
                 </TouchableWithoutFeedback>
+                </KeyboardAvoidingView>
             </Modal>
 
             {/* ── Friend Profile Modal ── */}
@@ -567,16 +546,6 @@ const styles = StyleSheet.create({
     addGreenBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
     declineBtn: { backgroundColor: '#F0F0F0', marginLeft: 8 },
     declineBtnText: { color: GRAY },
-    suggestedEmpty: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        borderRadius: 14,
-        padding: 16,
-        marginBottom: 10,
-    },
-    suggestedEmptyText: { color: '#BBB', fontSize: 13, flex: 1 },
-
     // Modals / bottom sheets
     modalOverlay: {
         flex: 1,

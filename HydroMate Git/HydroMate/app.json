@@ -37,6 +37,12 @@
                         "backgroundColor": "#000000"
                     }
                 }
+            ],
+            [
+                "expo-location",
+                {
+                    "locationWhenInUsePermission": "Allow HydroMate to use your location to find nearby water refill stations."
+                }
             ]
         ],
 
