@@ -62,6 +62,42 @@ export async function setUsername(uid, username, displayName, email) {
 }
 
 /**
+ * Change an existing username and keep the global username index in sync.
+ */
+export async function changeUsername(uid, currentUsername, nextUsername) {
+    if (!uid) throw new Error("You must be signed in to change your username.");
+
+    const nextTrimmed = nextUsername.trim();
+    const nextLower = nextTrimmed.toLowerCase();
+    const currentLower = (currentUsername || "").toLowerCase().trim();
+    const valid = /^[a-zA-Z0-9_]{3,20}$/.test(nextTrimmed);
+
+    if (!valid) throw new Error("Username must be between 3-20 characters and contain no spaces or special symbols.");
+    if (nextLower === currentLower) throw new Error("That is already your username.");
+
+    const takenSnap = await get(ref(db, `usernames/${nextLower}`));
+    if (takenSnap.exists() && takenSnap.val() !== uid) {
+        throw new Error("Username is already taken.");
+    }
+
+    const updates = {
+        [`users/${uid}/profile/username`]: nextTrimmed,
+        [`users/${uid}/profile/usernameLower`]: nextLower,
+        [`users/${uid}/profile/updatedAt`]: Date.now(),
+        [`usernames/${nextLower}`]: uid,
+    };
+
+    if (currentLower) {
+        const currentSnap = await get(ref(db, `usernames/${currentLower}`));
+        if (currentSnap.exists() && currentSnap.val() === uid) {
+            updates[`usernames/${currentLower}`] = null;
+        }
+    }
+
+    await update(ref(db), updates);
+}
+
+/**
  * Subscribe to live coaster data for a user.
  * Calls callback(data) whenever ESP32 writes a new reading.
  */
