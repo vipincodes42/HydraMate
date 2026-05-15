@@ -14,7 +14,7 @@
 #define SCK_PIN  5
 
 // LED strip
-#define LED_PIN      2
+#define LED_PIN      18
 #define NUM_LEDS     4
 #define BRIGHTNESS   30    // low power mode: 30/255 (~12%)
 
@@ -75,16 +75,21 @@ void setup() {
   // LED strip setup
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
-  setAllLEDs(CRGB::Black);
+  setAllLEDs(CRGB::White);
 
-  // WiFi
+  // WiFi — 15 second timeout, LEDs stay on regardless
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nWiFi connected");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected");
+  } else {
+    Serial.println("\nWiFi failed — running without Firebase");
+  }
 
   // Firebase
   config.database_url = DATABASE_URL;
@@ -121,12 +126,8 @@ void loop() {
     alertActive = true;
   }
 
-  // LED state
-  if (alertActive) {
-    pulseRed();
-  } else {
-    breatheGreen();
-  }
+  // LED state — solid white
+  setAllLEDs(CRGB::White);
 
   // Firebase push every 5 seconds
   if (Firebase.ready() && millis() - lastSend > 5000) {
