@@ -222,6 +222,16 @@ export async function getReviewsForStation(stationId) {
 }
 
 /**
+ * Fetch a single user's public profile node. Returns null if the user has no
+ * profile (e.g. an old review whose author was deleted, or never existed).
+ */
+export async function getUserProfile(uid) {
+    if (!uid) return null;
+    const snap = await get(ref(db, `users/${uid}/profile`));
+    return snap.exists() ? snap.val() : null;
+}
+
+/**
  * Add a new review to a station.
  */
 export async function addReviewForStation(stationId, rating, comment, userId) {

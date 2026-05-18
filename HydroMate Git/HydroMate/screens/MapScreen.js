@@ -17,12 +17,13 @@ import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { refillStations } from '../data/refillStations';
-import { addReviewForStation, getReviewsForStation, getUserFriendsList } from '../db';
+import { addReviewForStation, getReviewsForStation, getUserFriendsList, getUserProfile } from '../db';
 import { auth } from '../firebase';
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 const GREEN       = '#2E7D52';
 const GREEN_LIGHT = '#E8F5EE';
+const BLUE        = '#2563EB';   // user-location marker — kept distinct from green stations
 const CREAM       = '#F5F2ED';
 const CARD_BG     = '#FFFFFF';
 const TEXT_DARK   = '#1A1A1A';
@@ -66,6 +67,29 @@ function avgRating(reviews) {
   return (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1);
 }
 
+// Resolve a reviewer's display label from their profile node.
+// Prefers @username; falls back to displayName → email → "Anonymous".
+// Old reviews with no userId / no profile safely render as "Anonymous".
+function reviewerLabel(profile) {
+  if (!profile) return 'Anonymous';
+  if (profile.username)    return `@${profile.username}`;
+  if (profile.displayName) return profile.displayName;
+  if (profile.email)       return profile.email;
+  return 'Anonymous';
+}
+
+// First letter of a reviewer's name, for the small avatar circle.
+function reviewerInitial(profile) {
+  const label = reviewerLabel(profile).replace(/^@/, '');
+  return (label[0] || '?').toUpperCase();
+}
+
+// Render a 0–5 rating as filled/empty stars for clean, consistent display.
+function starString(rating) {
+  const n = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+  return '★'.repeat(n) + '☆'.repeat(5 - n);
+}
+
 // ─── Station list card ────────────────────────────────────────────────────────
 function StationCard({ station, reviews, isActive, locationLoading, onPress }) {
   const count = reviews?.length ?? 0;
@@ -89,7 +113,7 @@ function StationCard({ station, reviews, isActive, locationLoading, onPress }) {
         <Text style={styles.cardName} numberOfLines={1}>{station.name}</Text>
         {avg !== null && (
           <View style={styles.ratingBadge}>
-            <Text style={styles.ratingBadgeText}>{avg}</Text>
+            <Text style={styles.ratingBadgeText}>★ {avg}</Text>
           </View>
         )}
       </View>
@@ -115,6 +139,10 @@ export default function MapScreen() {
   const [reviewsMap,         setReviewsMap]         = useState({});
   const [myFriendIds,        setMyFriendIds]         = useState([]);
 
+  // Cache of reviewer profiles, keyed by uid. Built once per uid and reused
+  // across renders so we never re-fetch the same profile while scrolling.
+  const [profiles,           setProfiles]           = useState({});
+
   // Store only the ID — prevents stale object refs from causing re-renders
   const [activeStationId,    setActiveStationId]     = useState(null);
 
@@ -131,6 +159,11 @@ export default function MapScreen() {
   const [reviewFilterMode,   setReviewFilterMode]    = useState('all');
 
   const listRef             = useRef(null);
+  // Imperative handle on the MapView — used to animate to the user's location.
+  const mapRef              = useRef(null);
+  // Tracks which uids have already been fetched (or are in flight) so a uid is
+  // only ever requested from Firebase once, no matter how many reviews use it.
+  const requestedProfileIds = useRef(new Set());
   // Guard: prevents MapView.onPress from clearing selection when a marker was just tapped.
   // Both Marker.onPress and MapView.onPress fire as separate native events; the map press
   // would otherwise null out activeStationId immediately after the marker press set it.
@@ -142,6 +175,21 @@ export default function MapScreen() {
     [activeStationId]
   );
 
+  // ── Fetch any reviewer profiles we don't already have cached ─────────────────
+  // Accepts an array of reviews, collects their uids, and fetches only the ones
+  // not yet requested. Keeps Firebase reads to one per unique user.
+  const loadMissingProfiles = useCallback(async (reviews) => {
+    const ids = [...new Set((reviews || []).map((r) => r.userId).filter(Boolean))]
+      .filter((id) => !requestedProfileIds.current.has(id));
+    if (ids.length === 0) return;
+
+    ids.forEach((id) => requestedProfileIds.current.add(id));
+    const entries = await Promise.all(
+      ids.map(async (id) => [id, await getUserProfile(id)])
+    );
+    setProfiles((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+  }, []);
+
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
@@ -152,6 +200,9 @@ export default function MapScreen() {
         })
       );
       setReviewsMap(map);
+
+      // Warm the profile cache for every reviewer across all stations.
+      loadMissingProfiles(Object.values(map).flat());
 
       const uid = auth.currentUser?.uid;
       if (uid) setMyFriendIds(await getUserFriendsList(uid));
@@ -174,7 +225,7 @@ export default function MapScreen() {
       }
     }
     init();
-  }, []);
+  }, [loadMissingProfiles]);
 
   // ── Sorted stations ──────────────────────────────────────────────────────────
   const sortedStations = useMemo(() => {
@@ -239,6 +290,8 @@ export default function MapScreen() {
       );
       const fresh = await getReviewsForStation(selectedStation.id);
       setReviewsMap((prev) => ({ ...prev, [selectedStation.id]: fresh }));
+      // Make sure the just-added reviewer's profile is cached for display.
+      loadMissingProfiles(fresh);
       setReviewModalVisible(false);
     } catch (e) {
       console.error(e);
@@ -333,6 +386,21 @@ export default function MapScreen() {
     );
   }, [activeStation, reviewsMap, sortedStations, openReviewModal]);
 
+  // ── Recenter the map on the user's current location ──────────────────────────
+  // No-ops gracefully if location is unavailable (permission denied / not ready).
+  const centerOnUser = useCallback(() => {
+    if (!userLocation || !mapRef.current) return;
+    mapRef.current.animateToRegion(
+      {
+        latitude: userLocation.lat,
+        longitude: userLocation.lng,
+        latitudeDelta: 0.012,
+        longitudeDelta: 0.012,
+      },
+      500
+    );
+  }, [userLocation]);
+
   // ── Card renderer ────────────────────────────────────────────────────────────
   const renderCard = useCallback(({ item }) => (
     <StationCard
@@ -347,6 +415,11 @@ export default function MapScreen() {
     />
   ), [reviewsMap, activeStationId, locationLoading, userLocation, locationError, openReviewModal]);
 
+  // ── Derived review summary for the station shown in the modal ────────────────
+  const modalReviews = reviewsMap[selectedStation?.id] || [];
+  const modalAvg     = avgRating(modalReviews);
+  const modalCount   = modalReviews.length;
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
@@ -354,6 +427,7 @@ export default function MapScreen() {
       {/* ── MAP ───────────────────────────────────────────────────────────── */}
       <View style={{ height: MAP_HEIGHT }}>
         <MapView
+          ref={mapRef}
           style={StyleSheet.absoluteFillObject}
           initialRegion={{
             latitude: 32.8801,
@@ -365,7 +439,27 @@ export default function MapScreen() {
           onPress={handleMapPress}
         >
           {markerElements}
+
+          {/* ── USER LOCATION — distinct blue dot, only when location is known ── */}
+          {userLocation && (
+            <Marker
+              coordinate={{ latitude: userLocation.lat, longitude: userLocation.lng }}
+              title="You are here"
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.userMarkerRing}>
+                <View style={styles.userMarkerDot} />
+              </View>
+            </Marker>
+          )}
         </MapView>
+
+        {/* ── RECENTER BUTTON — shown once we have the user's location ───────── */}
+        {userLocation && (
+          <Pressable style={styles.locateBtn} onPress={centerOnUser} hitSlop={8}>
+            <Ionicons name="locate" size={20} color={GREEN} />
+          </Pressable>
+        )}
       </View>
 
       {/* ── STATION DETAIL TRAY (shown when a marker/card is selected) ────── */}
@@ -404,19 +498,39 @@ export default function MapScreen() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>
-                {modalMode === 'list' ? 'Reviews' : `Rate ${selectedStation?.name}`}
+              {/* ── Header — station name always shown clearly at the top ──── */}
+              <Text style={styles.modalLabel}>
+                {modalMode === 'list' ? 'WATER REFILL STATION' : 'RATE THIS STATION'}
+              </Text>
+              <Text style={styles.modalStationName} numberOfLines={2}>
+                {selectedStation?.name}
               </Text>
 
               {modalMode === 'list' ? (
                 <>
+                  {/* ── Summary card — average rating + total review count ── */}
+                  <View style={styles.summaryCard}>
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.summaryAvg}>{modalAvg ?? '—'}</Text>
+                      <Text style={styles.summaryStars}>{starString(modalAvg)}</Text>
+                    </View>
+                    <View style={styles.summaryDivider} />
+                    <View style={styles.summaryBlock}>
+                      <Text style={styles.summaryCount}>{modalCount}</Text>
+                      <Text style={styles.summaryCountLabel}>
+                        {modalCount === 1 ? 'review' : 'reviews'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* ── Filter tabs ───────────────────────────────────────── */}
                   <View style={styles.filterTabContainer}>
                     <Pressable
                       style={[styles.filterTab, reviewFilterMode === 'all' && styles.filterTabActive]}
                       onPress={() => setReviewFilterMode('all')}
                     >
                       <Text style={[styles.filterTabText, reviewFilterMode === 'all' && styles.filterTabTextActive]}>
-                        All Ratings
+                        All Reviews
                       </Text>
                     </Pressable>
                     <Pressable
@@ -424,12 +538,18 @@ export default function MapScreen() {
                       onPress={() => setReviewFilterMode('friends')}
                     >
                       <Text style={[styles.filterTabText, reviewFilterMode === 'friends' && styles.filterTabTextActive]}>
-                        Friends' Ratings
+                        Friends Only
                       </Text>
                     </Pressable>
                   </View>
 
-                  <ScrollView style={styles.reviewsListContainer}>
+                  {reviewFilterMode === 'friends' && (
+                    <Text style={styles.friendsHint}>
+                      Showing reviews from your friends only
+                    </Text>
+                  )}
+
+                  <ScrollView style={styles.reviewsListContainer} showsVerticalScrollIndicator={false}>
                     {(() => {
                       let revs = reviewsMap[selectedStation?.id] || [];
                       if (reviewFilterMode === 'friends') {
@@ -438,10 +558,16 @@ export default function MapScreen() {
                       if (revs.length === 0) {
                         return (
                           <View style={styles.emptyStateContainer}>
+                            <Ionicons
+                              name={reviewFilterMode === 'all' ? 'water-outline' : 'people-outline'}
+                              size={34}
+                              color={GREEN}
+                              style={{ marginBottom: 10 }}
+                            />
                             <Text style={styles.emptyReviewsText}>
                               {reviewFilterMode === 'all'
-                                ? 'No reviews yet. Be the first!'
-                                : "None of your friends have rated this station yet."}
+                                ? 'No reviews yet. Be the first to leave one!'
+                                : 'No friend reviews yet.'}
                             </Text>
                           </View>
                         );
@@ -449,14 +575,26 @@ export default function MapScreen() {
                       return revs.map((r, i) => (
                         <View key={i} style={styles.reviewCard}>
                           <View style={styles.reviewCardHeader}>
-                            <Text style={styles.reviewCardStars}>{'⭐'.repeat(r.rating)}</Text>
-                            <Text style={styles.reviewCardDate}>
-                              {new Date(r.createdAt).toLocaleDateString()}
-                            </Text>
+                            <View style={styles.reviewAvatar}>
+                              <Text style={styles.reviewAvatarText}>
+                                {reviewerInitial(profiles[r.userId])}
+                              </Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.reviewCardAuthor} numberOfLines={1}>
+                                {reviewerLabel(profiles[r.userId])}
+                              </Text>
+                              {r.createdAt ? (
+                                <Text style={styles.reviewCardDate}>
+                                  {new Date(r.createdAt).toLocaleDateString()}
+                                </Text>
+                              ) : null}
+                            </View>
+                            <Text style={styles.reviewCardStars}>{starString(r.rating)}</Text>
                           </View>
                           {r.comment
                             ? <Text style={styles.reviewCardComment}>{r.comment}</Text>
-                            : <Text style={styles.reviewCardCommentEmpty}>User left no comment</Text>
+                            : <Text style={styles.reviewCardCommentEmpty}>No comment left</Text>
                           }
                         </View>
                       ));
@@ -477,9 +615,10 @@ export default function MapScreen() {
                 </>
               ) : (
                 <>
+                  <Text style={styles.writeHint}>How was your experience?</Text>
                   <View style={styles.starRow}>
                     {[1, 2, 3, 4, 5].map((star) => (
-                      <Pressable key={star} onPress={() => setDraftRating(star)}>
+                      <Pressable key={star} onPress={() => setDraftRating(star)} hitSlop={6}>
                         <Text style={[styles.star, star <= draftRating && styles.starSelected]}>★</Text>
                       </Pressable>
                     ))}
@@ -488,28 +627,26 @@ export default function MapScreen() {
                   <TextInput
                     style={styles.modalInput}
                     placeholder="Write a short comment... (optional)"
-                    placeholderTextColor="#A0ABC0"
+                    placeholderTextColor={TEXT_MUTED}
                     value={draftComment}
                     onChangeText={setDraftComment}
                     multiline
                     maxLength={250}
                   />
 
-                  <View style={styles.modalBtnRow}>
-                    <Pressable
-                      style={styles.cancelBtn}
-                      onPress={() => setReviewModalVisible(false)}
-                      disabled={isSubmitting}
-                    >
-                      <Text style={styles.cancelBtnText}>Cancel</Text>
-                    </Pressable>
-                    <Pressable style={styles.submitBtn} onPress={submitReview} disabled={isSubmitting}>
-                      {isSubmitting
-                        ? <ActivityIndicator color="#0A1628" />
-                        : <Text style={styles.submitBtnText}>Submit</Text>
-                      }
-                    </Pressable>
-                  </View>
+                  <Pressable style={styles.submitBtnFull} onPress={submitReview} disabled={isSubmitting}>
+                    {isSubmitting
+                      ? <ActivityIndicator color="#FFFFFF" />
+                      : <Text style={styles.submitBtnFullText}>Submit Review</Text>
+                    }
+                  </Pressable>
+                  <Pressable
+                    style={styles.cancelLink}
+                    onPress={() => setReviewModalVisible(false)}
+                    disabled={isSubmitting}
+                  >
+                    <Text style={styles.cancelLinkText}>Cancel</Text>
+                  </Pressable>
                 </>
               )}
             </View>
@@ -572,6 +709,50 @@ const styles = StyleSheet.create({
   },
   markerLabelTextActive: {
     color: '#FFFFFF',
+  },
+
+  // ── User location marker ──────────────────────────────────────────────────────
+  // A blue dot with white border, sitting inside a soft translucent halo — clearly
+  // distinct from the green water-station pins. Static (no animation) so the
+  // native marker view is captured once and never misplaced.
+  userMarkerRing: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(37, 99, 235, 0.22)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userMarkerDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: BLUE,
+    borderWidth: 2.5,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+
+  // ── Recenter-on-user button ───────────────────────────────────────────────────
+  locateBtn: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: CARD_BG,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
   },
 
   // ── Station detail tray ───────────────────────────────────────────────────────
@@ -781,101 +962,199 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // ── Review modal ──────────────────────────────────────────────────────────────
+  // ── Review modal — light cream / green scheme ─────────────────────────────────
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10, 22, 40, 0.72)',
+    backgroundColor: 'rgba(26, 26, 26, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   modalContent: {
-    backgroundColor: '#0D2137',
+    backgroundColor: CREAM,
     width: '100%',
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 22,
+    padding: 22,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 12,
   },
-  modalTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
+  modalLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: GREEN,
+    letterSpacing: 0.8,
     textAlign: 'center',
   },
+  modalStationName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: TEXT_DARK,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 18,
+    letterSpacing: -0.3,
+  },
+
+  // ── Summary card ──────────────────────────────────────────────────────────────
+  summaryCard: {
+    flexDirection: 'row',
+    backgroundColor: CARD_BG,
+    borderRadius: 16,
+    paddingVertical: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  summaryBlock: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryDivider: {
+    width: 1,
+    height: 38,
+    backgroundColor: '#E8E4DD',
+  },
+  summaryAvg: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: TEXT_DARK,
+  },
+  summaryStars: {
+    fontSize: 13,
+    color: '#F5A623',
+    marginTop: 2,
+  },
+  summaryCount: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: GREEN,
+  },
+  summaryCountLabel: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    marginTop: 4,
+  },
+
+  // ── Filter tabs ───────────────────────────────────────────────────────────────
   filterTabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#0A1628',
-    borderRadius: 8,
+    backgroundColor: '#EAE6DE',
+    borderRadius: 12,
     padding: 4,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#1E3A5F',
+    marginBottom: 14,
   },
   filterTab: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 9,
     alignItems: 'center',
-    borderRadius: 6,
+    borderRadius: 9,
   },
-  filterTabActive:     { backgroundColor: '#4FC3F7' },
-  filterTabText:       { color: '#546E8A', fontWeight: 'bold', fontSize: 12 },
-  filterTabTextActive: { color: '#0A1628' },
+  filterTabActive: {
+    backgroundColor: CARD_BG,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  filterTabText:       { color: TEXT_MUTED, fontWeight: '700', fontSize: 12 },
+  filterTabTextActive: { color: GREEN },
+  friendsHint: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    fontStyle: 'italic',
+    marginBottom: 10,
+    marginLeft: 2,
+  },
+
   reviewsListContainer: {
-    maxHeight: 300,
-    marginBottom: 20,
+    maxHeight: 320,
+    marginBottom: 18,
   },
   emptyStateContainer: {
-    paddingVertical: 40,
+    paddingVertical: 44,
     alignItems: 'center',
   },
   emptyReviewsText: {
-    color: '#546E8A',
+    color: TEXT_MID,
     fontSize: 14,
-    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingHorizontal: 20,
   },
+
+  // ── Review card ───────────────────────────────────────────────────────────────
   reviewCard: {
-    backgroundColor: '#0A1628',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: CARD_BG,
+    borderRadius: 14,
+    padding: 14,
     marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#1E3A5F',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
   },
   reviewCardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+    gap: 10,
   },
-  reviewCardStars:        { fontSize: 12 },
-  reviewCardDate:         { color: '#546E8A', fontSize: 12 },
-  reviewCardComment:      { color: '#FFFFFF', fontSize: 14, lineHeight: 20 },
-  reviewCardCommentEmpty: { color: '#546E8A', fontSize: 14, fontStyle: 'italic' },
+  reviewAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: GREEN_LIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reviewAvatarText: {
+    color: GREEN,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  reviewCardAuthor:       { color: TEXT_DARK, fontSize: 14, fontWeight: '700' },
+  reviewCardStars:        { fontSize: 13, color: '#F5A623' },
+  reviewCardDate:         { color: TEXT_MUTED, fontSize: 12, marginTop: 1 },
+  reviewCardComment:      { color: TEXT_MID, fontSize: 14, lineHeight: 20 },
+  reviewCardCommentEmpty: { color: TEXT_MUTED, fontSize: 13, fontStyle: 'italic' },
+
+  // ── Write-review form ─────────────────────────────────────────────────────────
+  writeHint: {
+    fontSize: 14,
+    color: TEXT_MID,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
   starRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginBottom: 24,
-    gap: 8,
+    marginBottom: 20,
+    gap: 10,
   },
-  star:         { fontSize: 40, color: '#546E8A' },
-  starSelected: { color: '#F9A825' },
+  star:         { fontSize: 42, color: '#D8D2C6' },
+  starSelected: { color: '#F5A623' },
   modalInput: {
-    backgroundColor: '#0A1628',
-    color: '#FFFFFF',
-    borderRadius: 8,
+    backgroundColor: CARD_BG,
+    color: TEXT_DARK,
+    borderRadius: 16,
     padding: 16,
-    minHeight: 100,
+    minHeight: 110,
     textAlignVertical: 'top',
     fontSize: 14,
-    marginBottom: 24,
+    marginBottom: 18,
     borderWidth: 1,
-    borderColor: '#1E3A5F',
+    borderColor: '#E8E4DD',
   },
+
+  // ── Buttons ───────────────────────────────────────────────────────────────────
   modalBtnRow: {
     flexDirection: 'row',
     gap: 12,
@@ -883,20 +1162,38 @@ const styles = StyleSheet.create({
   cancelBtn: {
     flex: 1,
     backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#4FC3F7',
-    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: GREEN,
+    borderRadius: 28,
     paddingVertical: 14,
     alignItems: 'center',
   },
-  cancelBtnText: { color: '#4FC3F7', fontWeight: 'bold', fontSize: 16 },
+  cancelBtnText: { color: GREEN, fontWeight: '700', fontSize: 15 },
   submitBtn: {
     flex: 1,
-    backgroundColor: '#4FC3F7',
-    borderRadius: 8,
+    backgroundColor: GREEN,
+    borderRadius: 28,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  submitBtnText: { color: '#0A1628', fontWeight: 'bold', fontSize: 16 },
+  submitBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  submitBtnFull: {
+    backgroundColor: GREEN,
+    borderRadius: 28,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: GREEN,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  submitBtnFullText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  cancelLink: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  cancelLinkText: { color: TEXT_MUTED, fontWeight: '600', fontSize: 14 },
 });
