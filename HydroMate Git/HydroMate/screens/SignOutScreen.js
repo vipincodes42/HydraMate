@@ -8,6 +8,7 @@ import {
     Alert,
     Image,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     Pressable,
     ScrollView,
@@ -24,6 +25,7 @@ const PLANT_LVL6 = require('../assets/images/plantlvl6.png');
 export default function SignOutScreen() {
     const router = useRouter();
     const [isSigningOut, setIsSigningOut] = useState(false);
+    const [confirmVisible, setConfirmVisible] = useState(false);
     const [isSavingUsername, setIsSavingUsername] = useState(false);
     const [username, setUsername] = useState('');
     const [draftUsername, setDraftUsername] = useState('');
@@ -66,10 +68,6 @@ export default function SignOutScreen() {
         }
     };
 
-    const handleStayLoggedIn = () => {
-        router.replace('/');
-    };
-
     const handleSignOut = async () => {
         setIsSigningOut(true);
         try {
@@ -78,6 +76,7 @@ export default function SignOutScreen() {
         } catch (e) {
             Alert.alert('Sign Out Failed', e.message);
             setIsSigningOut(false);
+            setConfirmVisible(false);
         }
     };
 
@@ -136,33 +135,57 @@ export default function SignOutScreen() {
                     </Pressable>
                 </View>
 
-                <View style={styles.confirmCard}>
-                    <View style={styles.iconBadge}>
-                        <Ionicons name="log-out-outline" size={24} color="#6BAD6A" />
-                    </View>
-                    <Text style={styles.title}>are you sure you want to log out?</Text>
-
-                    <Pressable
-                        style={[styles.primaryButton, isSigningOut && styles.disabledButton]}
-                        onPress={handleStayLoggedIn}
-                        disabled={isSigningOut}
-                    >
-                        <Text style={styles.primaryButtonText}>Stay Logged In</Text>
-                    </Pressable>
-
-                    <Pressable
-                        style={[styles.secondaryButton, isSigningOut && styles.disabledButton]}
-                        onPress={handleSignOut}
-                        disabled={isSigningOut}
-                    >
-                        {isSigningOut ? (
-                            <ActivityIndicator color="#6BAD6A" />
-                        ) : (
-                            <Text style={styles.secondaryButtonText}>Sign Out</Text>
-                        )}
-                    </Pressable>
-                </View>
+                <Pressable
+                    style={[styles.signOutButton, isSigningOut && styles.disabledButton]}
+                    onPress={() => setConfirmVisible(true)}
+                    disabled={isSigningOut}
+                >
+                    <Ionicons
+                        name="log-out-outline"
+                        size={18}
+                        color="#FFFFFF"
+                        style={{ marginRight: 8 }}
+                    />
+                    <Text style={styles.signOutButtonText}>Sign Out</Text>
+                </Pressable>
             </ScrollView>
+
+            {/* ── Sign-out confirmation popup ─────────────────────────────── */}
+            <Modal
+                visible={confirmVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => !isSigningOut && setConfirmVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalCard}>
+                        <View style={styles.iconBadge}>
+                            <Ionicons name="log-out-outline" size={24} color="#6BAD6A" />
+                        </View>
+                        <Text style={styles.title}>are you sure you want to log out?</Text>
+
+                        <Pressable
+                            style={[styles.signOutButton, isSigningOut && styles.disabledButton]}
+                            onPress={handleSignOut}
+                            disabled={isSigningOut}
+                        >
+                            {isSigningOut ? (
+                                <ActivityIndicator color="#FFFFFF" />
+                            ) : (
+                                <Text style={styles.signOutButtonText}>Sign Out</Text>
+                            )}
+                        </Pressable>
+
+                        <Pressable
+                            style={[styles.cancelButton, isSigningOut && styles.disabledButton]}
+                            onPress={() => setConfirmVisible(false)}
+                            disabled={isSigningOut}
+                        >
+                            <Text style={styles.cancelButtonText}>Cancel</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            </Modal>
         </KeyboardAvoidingView>
     );
 }
@@ -265,17 +288,6 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '700',
     },
-    confirmCard: {
-        width: '100%',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 20,
-        padding: 22,
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        elevation: 3,
-    },
     iconBadge: {
         width: 52,
         height: 52,
@@ -292,30 +304,48 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         marginBottom: 20,
     },
-    primaryButton: {
+    signOutButton: {
         width: '100%',
-        backgroundColor: '#6BAD6A',
+        flexDirection: 'row',
+        backgroundColor: '#E0564F',
         borderRadius: 14,
         paddingVertical: 15,
         alignItems: 'center',
-        marginBottom: 12,
+        justifyContent: 'center',
     },
-    primaryButtonText: {
+    signOutButtonText: {
         color: '#FFFFFF',
         fontSize: 15,
         fontWeight: '700',
     },
-    secondaryButton: {
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.45)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 32,
+    },
+    modalCard: {
         width: '100%',
         backgroundColor: '#FFFFFF',
-        borderColor: '#6BAD6A',
-        borderWidth: 1,
+        borderRadius: 20,
+        padding: 24,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOpacity: 0.15,
+        shadowRadius: 16,
+        elevation: 6,
+    },
+    cancelButton: {
+        width: '100%',
+        backgroundColor: '#F8F6F3',
         borderRadius: 14,
         paddingVertical: 14,
         alignItems: 'center',
+        marginTop: 10,
     },
-    secondaryButtonText: {
-        color: '#6BAD6A',
+    cancelButtonText: {
+        color: '#7A7A7A',
         fontSize: 15,
         fontWeight: '700',
     },
