@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -180,6 +180,48 @@ function StationCard({ station, reviews, isActive, locationLoading, onPress }) {
   );
 }
 
+// ─── Map marker ───────────────────────────────────────────────────────────────
+// One water-station pin. Memoized so it only re-renders when ITS OWN props
+// change — when reviews load, only the handful of stations that gained a rating
+// re-render, instead of all 96 re-capturing at once (the mass re-capture is
+// what made markers blink out until the map was tapped).
+//
+// Each marker owns its `tracksViewChanges`: true briefly so react-native-maps
+// captures the custom view, then false so the native layer stops re-rendering
+// it every frame. It re-arms whenever this marker's own appearance changes.
+const StationMarker = memo(function StationMarker({
+  id, latitude, longitude, avg, isActive, isFilteredIn, onPress,
+}) {
+  const [tracksViewChanges, setTracksViewChanges] = useState(true);
+
+  useEffect(() => {
+    setTracksViewChanges(true);
+    const t = setTimeout(() => setTracksViewChanges(false), 700);
+    return () => clearTimeout(t);
+  }, [avg, isActive, isFilteredIn]);
+
+  return (
+    <Marker
+      coordinate={{ latitude, longitude }}
+      tracksViewChanges={tracksViewChanges}
+      onPress={() => { if (isFilteredIn) onPress(id); }}
+    >
+      <View style={[styles.markerRoot, !isFilteredIn && styles.markerRootDimmed]}>
+        <View style={[styles.markerPin, isActive && styles.markerPinActive]}>
+          <Ionicons name="water" size={14} color={isActive ? '#FFFFFF' : GREEN} />
+        </View>
+        {avg !== null && (
+          <View style={[styles.markerLabel, isActive && styles.markerLabelActive]}>
+            <Text style={[styles.markerLabelText, isActive && styles.markerLabelTextActive]}>
+              {avg}
+            </Text>
+          </View>
+        )}
+      </View>
+    </Marker>
+  );
+});
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function MapScreen() {
   const [reviewsMap,         setReviewsMap]         = useState({});
@@ -318,6 +360,25 @@ export default function MapScreen() {
     [filteredStations]
   );
 
+  // Mirror of the latest filtered list in a ref, so handleMarkerPress can stay
+  // a STABLE callback — passing a changing onPress to 96 markers would defeat
+  // their React.memo and re-capture every marker on every filter/selection.
+  const filteredStationsRef = useRef(filteredStations);
+  filteredStationsRef.current = filteredStations;
+
+  // ── Debug: one-time initial-load diagnostics ─────────────────────────────────
+  useEffect(() => {
+    const validCoords = refillStations.filter(
+      (s) => Number.isFinite(Number(s.latitude)) && Number.isFinite(Number(s.longitude))
+    ).length;
+    console.log(
+      '[MAP INIT] stations imported:', refillStations.length,
+      '| valid coords:', validCoords,
+      '| areaFilter:', areaFilter, '| ratingFilter:', ratingFilter,
+      '| userLocation:', !!userLocation,
+    );
+  }, []);
+
   // ── Keep the active selection consistent with the filters ────────────────────
   // If the filters exclude the currently-selected station, clear the detail tray
   // so the active state always matches the filtered nearby list.
@@ -332,26 +393,23 @@ export default function MapScreen() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
-  // Marker tapped: set the ref BEFORE state update so the map's onPress guard fires
+  // Marker tapped: set the ref BEFORE state update so the map's onPress guard
+  // fires. STABLE callback (empty deps) — it reads the live filtered list from
+  // a ref so its identity never changes, keeping the markers' React.memo intact.
   const handleMarkerPress = useCallback((stationId) => {
     const station = refillStations.find((s) => s.id === stationId);
-    console.log(
-      '[Marker] pressed | id:', stationId,
-      '| name:', station?.name,
-      '| lat:', station?.latitude,
-      '| lng:', station?.longitude,
-      '| activeStationId was:', activeStationId,
-    );
+    console.log('[Marker] pressed | id:', stationId, '| name:', station?.name);
     markerJustPressed.current = true;
     setActiveStationId(stationId);
     // Index into the filtered list. Bounds-check defensively: scrollToIndex
     // throws if the index is out of range, so never call it for a station
     // missing from the current list.
-    const idx = filteredStations.findIndex((s) => s.id === stationId);
-    if (idx >= 0 && idx < filteredStations.length && listRef.current) {
+    const list = filteredStationsRef.current;
+    const idx = list.findIndex((s) => s.id === stationId);
+    if (idx >= 0 && idx < list.length && listRef.current) {
       listRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0.1 });
     }
-  }, [filteredStations, activeStationId]);
+  }, []);
 
   // Map background tapped: only dismiss if it was truly an open-area tap
   const handleMapPress = useCallback(() => {
@@ -396,38 +454,37 @@ export default function MapScreen() {
   // ── Markers — keep every station mounted. Expo Go/react-native-maps can hard
   // crash when many custom markers are unmounted/remounted during filter changes.
   // The list is filtered; non-matching map markers are faded in place.
-  // tracksViewChanges is intentionally omitted (defaults to true on both platforms).
-  // Flipping it false→true when isActive changes caused the native layer to recapture
-  // the view before layout completed, placing the marker at the map's screen origin.
-  const markerElements = useMemo(() => sortedStations.map((station) => {
-    const revs     = reviewsMap[station.id] || [];
-    const avg      = avgRating(revs);
-    const isActive = station.id === activeStationId;
-    const isFilteredIn = filteredStationIds.has(station.id);
-
-    return (
-      <Marker
-        key={station.id}
-        coordinate={{ latitude: station.latitude, longitude: station.longitude }}
-        onPress={() => {
-          if (isFilteredIn) handleMarkerPress(station.id);
-        }}
-      >
-        <View style={[styles.markerRoot, !isFilteredIn && styles.markerRootDimmed]}>
-          <View style={[styles.markerPin, isActive && styles.markerPinActive]}>
-            <Ionicons name="water" size={14} color={isActive ? '#FFFFFF' : GREEN} />
-          </View>
-          {avg !== null && (
-            <View style={[styles.markerLabel, isActive && styles.markerLabelActive]}>
-              <Text style={[styles.markerLabelText, isActive && styles.markerLabelTextActive]}>
-                {avg}
-              </Text>
-            </View>
-          )}
-        </View>
-      </Marker>
-    );
-  }), [sortedStations, filteredStationIds, reviewsMap, activeStationId, handleMarkerPress]);
+  //
+  // All markers render synchronously from refillStations (via sortedStations) —
+  // they do NOT wait on user location, reviews, ratings, or filters. Each is a
+  // memoized <StationMarker>, so a state update (e.g. reviews loading) only
+  // re-renders the markers whose own props changed — the rest are left alone
+  // and stay painted, instead of all 96 re-capturing and blinking out.
+  const markerElements = useMemo(() => {
+    const markers = sortedStations.map((station) => {
+      const lat = Number(station.latitude);
+      const lng = Number(station.longitude);
+      // Skip a station with unusable coordinates rather than crash the map.
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        console.warn('[MARKERS] invalid coords — skipping station:', station.id, station.name);
+        return null;
+      }
+      return (
+        <StationMarker
+          key={station.id}
+          id={station.id}
+          latitude={lat}
+          longitude={lng}
+          avg={avgRating(reviewsMap[station.id] || [])}
+          isActive={station.id === activeStationId}
+          isFilteredIn={filteredStationIds.has(station.id)}
+          onPress={handleMarkerPress}
+        />
+      );
+    });
+    console.log(`[MARKERS] built ${markers.filter(Boolean).length}/${sortedStations.length} markers`);
+    return markers;
+  }, [sortedStations, filteredStationIds, reviewsMap, activeStationId, handleMarkerPress]);
 
   // ── Station detail tray (active station info above the list) ─────────────────
   const activeTray = useMemo(() => {
@@ -543,6 +600,7 @@ export default function MapScreen() {
           }}
           customMapStyle={lightMapStyle}
           onPress={handleMapPress}
+          onMapReady={() => console.log('[MAP INIT] onMapReady fired')}
         >
           {markerElements}
 
