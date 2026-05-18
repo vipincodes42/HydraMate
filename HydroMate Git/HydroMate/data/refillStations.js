@@ -18,7 +18,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "arcgis",
     "tags": [
-      "Other"
+      "Pepper Canyon"
     ]
   },
   {
@@ -29,7 +29,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "arcgis",
     "tags": [
-      "Other"
+      "Pepper Canyon"
     ]
   },
   {
@@ -40,7 +40,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "arcgis",
     "tags": [
-      "Other"
+      "Med Campus"
     ]
   },
   {
@@ -84,7 +84,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "arcgis",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -118,8 +118,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "arcgis",
     "tags": [
-      "Seventh",
-      "Revelle"
+      "Seventh"
     ]
   },
   {
@@ -196,7 +195,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Dining Hall"
     ]
   },
   {
@@ -207,7 +206,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -218,7 +217,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -273,7 +272,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -284,7 +283,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -306,7 +305,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Sixth"
     ]
   },
   {
@@ -317,7 +316,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -372,7 +371,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "ERC"
     ]
   },
   {
@@ -482,7 +481,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -493,7 +492,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -504,7 +503,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Revelle"
     ]
   },
   {
@@ -515,7 +514,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Eighth"
     ]
   },
   {
@@ -537,7 +536,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Med Campus"
     ]
   },
   {
@@ -548,7 +547,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Pepper Canyon"
     ]
   },
   {
@@ -559,7 +558,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Pepper Canyon"
     ]
   },
   {
@@ -592,7 +591,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -603,7 +602,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -647,7 +646,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Athletics"
     ]
   },
   {
@@ -757,7 +756,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Marshall"
     ]
   },
   {
@@ -768,7 +767,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Marshall"
     ]
   },
   {
@@ -779,7 +778,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Sixth"
     ]
   },
   {
@@ -790,7 +789,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -823,7 +822,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Revelle"
     ]
   },
   {
@@ -889,7 +888,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Eighth"
     ]
   },
   {
@@ -911,7 +910,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "ERC"
     ]
   },
   {
@@ -922,7 +921,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "ERC"
     ]
   },
   {
@@ -933,7 +932,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "ERC"
     ]
   },
   {
@@ -944,7 +943,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Eighth"
     ]
   },
   {
@@ -966,7 +965,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Med Campus"
     ]
   },
   {
@@ -988,7 +987,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Price Center"
     ]
   },
   {
@@ -999,7 +998,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -1010,7 +1009,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Warren"
     ]
   },
   {
@@ -1032,7 +1031,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Muir"
     ]
   },
   {
@@ -1043,7 +1042,7 @@ export const refillStations = [
     "description": "Water refill station",
     "source": "ucsd_mobile_maps",
     "tags": [
-      "Other"
+      "Revelle"
     ]
   },
   {

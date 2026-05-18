@@ -42,17 +42,58 @@ const TAG_RULES = [
 // ─── Manual tag corrections ───────────────────────────────────────────────────
 // Some stations cannot be tagged correctly from their name alone (e.g. "Tata
 // Hall" carries no college keyword, "The Zone" is inside Price Center). These
-// overrides are keyed by the lowercased station name and FULLY REPLACE the
-// name-derived tags — so re-running this script preserves the corrections.
-// Station names never change, so keying by name is stable.
+// overrides FULLY REPLACE the name-derived tags, so re-running this script
+// preserves the corrections.
+//
+// Keyed by station ID (stable and unique) — names are NOT unique: there are two
+// "Student Services Center" entries, so a name key could not target just one.
 const TAG_OVERRIDES = {
-  'tata hall':           ['Revelle'],
-  'york hall':           ['Revelle'],
-  'galbraith hall (gh)': ['Eighth'],
-  'the strand':          ['Seventh'],
-  'the soap bar':        ['Seventh'],
-  'the zone':            ['Price Center'],
-  'burger king':         ['Price Center'],
+  2:  ['Pepper Canyon'],   // Pepper Canyon East Apartments
+  3:  ['Pepper Canyon'],   // Pepper Canyon Hall
+  4:  ['Med Campus'],      // Student Services Center (southern one)
+  8:  ['Muir'],            // Humanities and Social Sciences Building
+  11: ['Seventh'],         // Seventh - Wells Fargo Hall
+  17: ['Price Center'],    // Burger King
+  18: ['Dining Hall'],     // Canyon Vista
+  19: ['Warren'],          // Computer Science and Engineering Building Basement
+  20: ['Warren'],          // Engineering Building Unit II (EBU2)
+  22: ['Eighth'],          // Galbraith Hall (GH)
+  25: ['Muir'],            // Blue Pepper
+  26: ['Warren'],          // Jacobs Hall / Engineering Building Unit I (EBU1)
+  28: ['Sixth'],           // Peterson Hall (PETER)
+  29: ['Muir'],            // Campus Pub
+  34: ['ERC'],             // Student Activities Center
+  35: ['Seventh'],         // The Soap Bar
+  36: ['Price Center'],    // The Zone
+  44: ['Muir'],            // AP&M 2nd Floor Lobby
+  45: ['Muir'],            // Tamarack Apartments
+  46: ['Revelle'],         // Keeling Apartment Building 2
+  47: ['Eighth'],          // Dance Studio Facility
+  49: ['Med Campus'],      // Telemed 3rd Floor
+  50: ['Pepper Canyon'],   // Matthews Building B
+  51: ['Pepper Canyon'],   // Pepper Canyon Apartments Laundry Room
+  54: ['Warren'],          // Black Apartments Laundry Room
+  55: ['Warren'],          // Goldberg Apartments Laundry Room
+  59: ['Athletics'],       // 4th Floor Gym
+  68: ['Seventh'],         // The Strand
+  69: ['Marshall'],        // Social Sciences Building
+  70: ['Marshall'],        // Communications Building
+  71: ['Sixth'],           // Social Sciences Research Building
+  72: ['Muir'],            // Mandeville Auditorium
+  75: ['Revelle'],         // Natural Sciences Building
+  76: ['Revelle'],         // York Hall
+  80: ['Revelle'],         // Tata Hall
+  81: ['Eighth'],          // Mandell Weiss Forum
+  83: ['ERC'],             // Robinson Building 1
+  84: ['ERC'],             // Robinson Auditorium
+  85: ['ERC'],             // Robinson Library
+  86: ['Eighth'],          // Mandell Weiss Theater
+  88: ['Med Campus'],      // Pharmaceutical Sciences Building
+  90: ['Price Center'],    // SERF
+  91: ['Warren'],          // Atkinson Hall
+  92: ['Warren'],          // Structural Materials & Engineering
+  94: ['Muir'],            // Student Services A
+  95: ['Revelle'],         // Bonner Hall
 };
 
 function tagsForName(name) {
@@ -66,11 +107,11 @@ function tagsForName(name) {
   return tags.length ? tags : ['Other'];
 }
 
-// Final tags for a station: a manual override wins outright; otherwise the
-// name-matching rules apply.
-function tagsForStation(name) {
-  const override = TAG_OVERRIDES[String(name || '').trim().toLowerCase()];
-  return override ? [...override] : tagsForName(name);
+// Final tags for a station: a manual override (by ID) wins outright; otherwise
+// the name-matching rules apply.
+function tagsForStation(station) {
+  const override = TAG_OVERRIDES[station.id];
+  return override ? [...override] : tagsForName(station.name);
 }
 
 // data/refillStations.js is `export const refillStations = <JSON array>;`
@@ -87,8 +128,8 @@ function main() {
   console.log(`Loaded ${stations.length} stations.\n`);
 
   const tagged = stations.map((s) => ({
-    ...s,                          // preserve id, name, coords, description, source…
-    tags: tagsForStation(s.name),  // overwrite tags only (overrides win)
+    ...s,                      // preserve id, name, coords, description, source…
+    tags: tagsForStation(s),   // overwrite tags only (overrides win)
   }));
 
   const output = `export const refillStations = ${JSON.stringify(tagged, null, 2)};\n`;

@@ -75,8 +75,9 @@ function avgRating(reviews) {
 // Area pills — "All" plus the UCSD area tags written into data/refillStations.js
 // by scripts/tagRefillStations.js.
 const AREA_FILTERS = [
-  'All', 'Seventh', 'Marshall', 'ERC', 'Warren', 'Sixth', 'Revelle', 'Eighth',
-  'Dining Hall', 'Scripps', 'Med Campus', 'Price Center', 'Athletics', 'Other',
+  'All', 'Seventh', 'Marshall', 'ERC', 'Warren', 'Sixth', 'Revelle', 'Muir',
+  'Eighth', 'Pepper Canyon', 'Dining Hall', 'Scripps', 'Med Campus',
+  'Price Center', 'Athletics', 'Other',
 ];
 
 // Rating pills — `key` is 'all', 'none', or a numeric "& up" threshold.
