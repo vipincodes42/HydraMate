@@ -141,16 +141,39 @@ export function subscribeToLive(uid, callback) {
 /**
  * Log a sip event to today's history bucket.
  */
-export async function logSip(uid, ml) {
+export async function logSip(uid, ml, source = 'manual') {
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const readRef = ref(db, `users/${uid}/history/${today}/readings`);
-    await push(readRef, { ts: Date.now(), ml: Math.round(ml) });
+    await push(readRef, { ts: Date.now(), ml: Math.round(ml), source });
 
     // Update daily total
     const totRef = ref(db, `users/${uid}/history/${today}/totalMl`);
     const snap = await get(totRef);
     const current = snap.val() ?? 0;
     await set(totRef, current + ml);
+}
+
+/**
+ * Add a manual hydration entry and keep live + daily history totals aligned.
+ */
+export async function quickAddHydration(uid, ml) {
+    if (!uid) throw new Error("You must be signed in to add water.");
+    const amount = Math.max(0, Math.round(Number(ml) || 0));
+    if (amount <= 0) throw new Error("Hydration amount must be greater than zero.");
+
+    await logSip(uid, amount, 'manual');
+
+    const liveRef = ref(db, `users/${uid}/live`);
+    const liveSnap = await get(liveRef);
+    const live = liveSnap.val() ?? {};
+    const current = live.totalDrankML ?? live.totalDrunkML ?? live.totalDrunkMl ?? 0;
+
+    await update(liveRef, {
+        ...live,
+        totalDrankML: Math.max(0, Math.round(Number(current) || 0)) + amount,
+        totalDrunkML: null,
+        totalDrunkMl: null,
+    });
 }
 
 /**
@@ -166,6 +189,19 @@ export async function getHistory(uid, days = 7) {
         results.unshift({ date: key, ml: snap.val() ?? 0 });
     }
     return results;
+}
+
+/**
+ * Save a user's preferred daily hydration goal.
+ */
+export async function setHydrationGoal(uid, goalMl) {
+    if (!uid) throw new Error("You must be signed in to update your goal.");
+    const cleanGoal = Math.max(500, Math.min(6000, Math.round(Number(goalMl) || 2000)));
+    await update(ref(db, `users/${uid}/profile`), {
+        hydrationGoalMl: cleanGoal,
+        updatedAt: Date.now(),
+    });
+    return cleanGoal;
 }
 
 /**
@@ -234,14 +270,74 @@ export async function getUserProfile(uid) {
 /**
  * Add a new review to a station.
  */
-export async function addReviewForStation(stationId, rating, comment, userId) {
+export async function addReviewForStation(stationId, rating, comment, userId, status = null) {
     const reviewRef = ref(db, `reviews/${stationId}`);
     await push(reviewRef, {
         userId: userId || null,
         rating: Number(rating),
         comment: comment || "",
+        status: status || null,
         createdAt: Date.now()
     });
+
+    if (userId && status) {
+        await setStationStatus(stationId, userId, status);
+    }
+}
+
+/**
+ * Mark a station as working or broken.
+ */
+export async function setStationStatus(stationId, uid, status) {
+    if (!stationId || !uid) throw new Error("Missing station or user.");
+    if (!['working', 'broken'].includes(status)) {
+        throw new Error("Station status must be working or broken.");
+    }
+
+    await set(ref(db, `stationStatus/${stationId}/${uid}`), {
+        status,
+        updatedAt: Date.now(),
+    });
+}
+
+/**
+ * Summarize recent station status reports.
+ */
+export async function getStationStatusSummary(stationId) {
+    const snap = await get(ref(db, `stationStatus/${stationId}`));
+    if (!snap.exists()) return { working: 0, broken: 0, latestStatus: null, latestAt: null };
+
+    const reports = Object.values(snap.val() ?? {});
+    const working = reports.filter((r) => r?.status === 'working').length;
+    const broken = reports.filter((r) => r?.status === 'broken').length;
+    const latest = reports
+        .filter((r) => r?.status)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
+
+    return {
+        working,
+        broken,
+        latestStatus: latest?.status ?? null,
+        latestAt: latest?.updatedAt ?? null,
+    };
+}
+
+/**
+ * Favorite/bookmark a refill station for the signed-in user.
+ */
+export async function setFavoriteStation(uid, stationId, favorite) {
+    if (!uid || !stationId) throw new Error("Missing user or station.");
+    await set(ref(db, `favoriteStations/${uid}/${stationId}`), favorite ? true : null);
+}
+
+/**
+ * Get a user's favorite station ids.
+ */
+export async function getFavoriteStations(uid) {
+    if (!uid) return [];
+    const snap = await get(ref(db, `favoriteStations/${uid}`));
+    if (!snap.exists()) return [];
+    return Object.keys(snap.val() ?? {});
 }
 
 /**

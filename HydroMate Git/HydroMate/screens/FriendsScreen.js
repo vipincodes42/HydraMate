@@ -37,7 +37,11 @@ function getAvatar(name) {
 }
 
 function getMl(live) {
-    return live?.totalDrankML ?? live?.totalDrunkML ?? 0;
+    return live?.totalDrankML ?? live?.totalDrunkML ?? live?.totalDrunkMl ?? 0;
+}
+
+function getStreak(entry) {
+    return entry?.live?.streakDays ?? entry?.streakDays ?? entry?.profile?.streakDays ?? 0;
 }
 
 export default function FriendsScreen() {
@@ -53,6 +57,7 @@ export default function FriendsScreen() {
 
     const [selectedFriend, setSelectedFriend] = useState(null);
     const [friendReviews, setFriendReviews] = useState([]);
+    const [activityFeed, setActivityFeed] = useState([]);
     const [profileModalVisible, setProfileModalVisible] = useState(false);
 
     const uid = auth.currentUser?.uid;
@@ -71,8 +76,32 @@ export default function FriendsScreen() {
                 friendsData.sort((a, b) => getMl(b.live) - getMl(a.live))
             );
             setPendingReqs(pending);
-            setCurrentUserProfile(profileSnap.val());
+            const profile = profileSnap.val();
+            setCurrentUserProfile(profile);
             setCurrentUserLive(liveSnap.val());
+
+            const reviewFeeds = await Promise.all(
+                friendsData.slice(0, 8).map(async (friend) => {
+                    const reviews = await getRecentUserReviews(friend.uid);
+                    return reviews.slice(0, 2).map((review) => ({
+                        ...review,
+                        uid: friend.uid,
+                        displayName: friend.displayName ?? 'Friend',
+                    }));
+                })
+            );
+            const myReviews = await getRecentUserReviews(uid);
+            setActivityFeed(
+                [
+                    ...reviewFeeds.flat(),
+                    ...myReviews.slice(0, 2).map((review) => ({
+                        ...review,
+                        uid,
+                        displayName: profile?.displayName ?? 'You',
+                        isMe: true,
+                    })),
+                ].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)).slice(0, 8)
+            );
         } catch (e) {
             console.error('[FriendsScreen] loadData error:', e);
         }
@@ -134,6 +163,9 @@ export default function FriendsScreen() {
     // Team challenge totals
     const teamTotal = leaderboard.reduce((sum, f) => sum + getMl(f.live), 0);
     const teamPct = Math.min(teamTotal / TEAM_GOAL_ML, 1);
+    const streakLeaderboard = [...leaderboard]
+        .sort((a, b) => getStreak(b) - getStreak(a) || getMl(b.live) - getMl(a.live))
+        .slice(0, 5);
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -176,6 +208,27 @@ export default function FriendsScreen() {
                     <Text style={styles.challengeFooter}>
                         {Math.round(teamPct * 100)}% complete • keep it up!
                     </Text>
+                </View>
+
+                {/* ── Streak Competition ── */}
+                <View style={styles.card}>
+                    <View style={styles.cardHeaderRow}>
+                        <Ionicons name="flame-outline" size={16} color="#888" style={{ marginRight: 6 }} />
+                        <Text style={styles.cardTitle}>streak competition</Text>
+                    </View>
+
+                    {streakLeaderboard.map((item, index) => (
+                        <View key={`streak-${item.uid}`} style={styles.streakRow}>
+                            <Text style={styles.streakRank}>#{index + 1}</Text>
+                            <View style={styles.avatarCircleSmall}>
+                                <Text style={styles.avatarEmojiSmall}>{getAvatar(item.displayName)}</Text>
+                            </View>
+                            <Text style={styles.streakName} numberOfLines={1}>
+                                {item.isMe ? 'You' : item.displayName ?? 'Friend'}
+                            </Text>
+                            <Text style={styles.streakDays}>{getStreak(item)} days</Text>
+                        </View>
+                    ))}
                 </View>
 
                 {/* ── Today's Leaderboard ── */}
@@ -223,6 +276,35 @@ export default function FriendsScreen() {
 
                     {!loading && leaderboard.length === 1 && (
                         <Text style={styles.emptyHint}>Add friends to grow the leaderboard!</Text>
+                    )}
+                </View>
+
+                {/* ── Friend Activity Feed ── */}
+                <View style={styles.card}>
+                    <View style={styles.cardHeaderRow}>
+                        <Ionicons name="newspaper-outline" size={16} color="#888" style={{ marginRight: 6 }} />
+                        <Text style={styles.cardTitle}>friend activity</Text>
+                    </View>
+
+                    {activityFeed.length === 0 ? (
+                        <Text style={styles.emptyHint}>No friend activity yet.</Text>
+                    ) : (
+                        activityFeed.map((item) => (
+                            <View key={`${item.uid}-${item.reviewId}`} style={styles.feedRow}>
+                                <View style={styles.avatarCircleSmall}>
+                                    <Text style={styles.avatarEmojiSmall}>{getAvatar(item.displayName)}</Text>
+                                </View>
+                                <View style={styles.feedInfo}>
+                                    <Text style={styles.feedText}>
+                                        <Text style={styles.feedName}>{item.isMe ? 'You' : item.displayName}</Text>
+                                        {` rated a station ${'★'.repeat(item.rating ?? 0)}`}
+                                    </Text>
+                                    <Text style={styles.feedSub} numberOfLines={1}>
+                                        {item.comment || 'No comment left'}
+                                    </Text>
+                                </View>
+                            </View>
+                        ))
                     )}
                 </View>
 
@@ -487,6 +569,16 @@ const styles = StyleSheet.create({
         marginRight: 12,
     },
     avatarEmoji: { fontSize: 20 },
+    avatarCircleSmall: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#F0EDE8',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    avatarEmojiSmall: { fontSize: 16 },
     avatarLarge: { width: 56, height: 56, borderRadius: 28 },
     avatarEmojiLarge: { fontSize: 28 },
     friendInfo: { flex: 1 },
@@ -509,6 +601,25 @@ const styles = StyleSheet.create({
     progressBarFill: { height: '100%', backgroundColor: GREEN, borderRadius: 3 },
     mlText: { color: GRAY, fontSize: 13, marginLeft: 10, marginRight: 4 },
     rankText: { color: '#BBB', fontSize: 13, fontWeight: '700', width: 30, textAlign: 'right' },
+    streakRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+    },
+    streakRank: { color: '#BBB', fontSize: 13, fontWeight: '800', width: 34 },
+    streakName: { flex: 1, color: DARK, fontSize: 14, fontWeight: '700' },
+    streakDays: { color: '#D97706', fontSize: 13, fontWeight: '800' },
+    feedRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        paddingVertical: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#F3F1ED',
+    },
+    feedInfo: { flex: 1 },
+    feedText: { color: DARK, fontSize: 14, lineHeight: 19 },
+    feedName: { fontWeight: '800' },
+    feedSub: { color: GRAY, fontSize: 12, marginTop: 3 },
 
     emptyHint: { color: '#BBB', textAlign: 'center', marginVertical: 14, fontSize: 13 },
 

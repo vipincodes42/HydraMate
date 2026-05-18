@@ -61,7 +61,7 @@ export default function RootLayout() {
     } else if (user && inLogin) {
       router.replace('/');
     }
-  }, [user, loading, segments]);
+  }, [user, loading, segments, router]);
 
   const handleClaimUsername = async () => {
       if (!draftUsername.trim()) return;

@@ -17,7 +17,16 @@ import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { refillStations } from '../data/refillStations';
-import { addReviewForStation, getReviewsForStation, getUserFriendsList, getUserProfile } from '../db';
+import {
+  addReviewForStation,
+  getFavoriteStations,
+  getReviewsForStation,
+  getStationStatusSummary,
+  getUserFriendsList,
+  getUserProfile,
+  setFavoriteStation,
+  setStationStatus,
+} from '../db';
 import { auth } from '../firebase';
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -136,11 +145,17 @@ function starString(rating) {
   return '★'.repeat(n) + '☆'.repeat(5 - n);
 }
 
+function stationStatusLabel(summary) {
+  if (!summary?.latestStatus) return 'unknown';
+  return summary.latestStatus === 'working' ? 'working' : 'broken';
+}
+
 // ─── Station list card ────────────────────────────────────────────────────────
-function StationCard({ station, reviews, isActive, locationLoading, onPress }) {
+function StationCard({ station, reviews, statusSummary, isFavorite, isActive, locationLoading, onPress }) {
   const count = reviews?.length ?? 0;
   const avg   = avgRating(reviews);
   const dist  = station.distanceMiles;
+  const statusLabel = stationStatusLabel(statusSummary);
 
   let metaText;
   if (locationLoading) {
@@ -157,11 +172,18 @@ function StationCard({ station, reviews, isActive, locationLoading, onPress }) {
     <Pressable style={[styles.card, isActive && styles.cardActive]} onPress={onPress}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardName} numberOfLines={1}>{station.name}</Text>
-        {avg !== null && (
-          <View style={styles.ratingBadge}>
-            <Text style={styles.ratingBadgeText}>★ {avg}</Text>
-          </View>
-        )}
+        <View style={styles.cardBadgeRow}>
+          {isFavorite && (
+            <View style={styles.favoriteBadge}>
+              <Ionicons name="bookmark" size={11} color="#FFFFFF" />
+            </View>
+          )}
+          {avg !== null && (
+            <View style={styles.ratingBadge}>
+              <Text style={styles.ratingBadgeText}>★ {avg}</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <View style={styles.cardMeta}>
@@ -176,6 +198,23 @@ function StationCard({ station, reviews, isActive, locationLoading, onPress }) {
       {count === 0 && !locationLoading && (
         <Text style={styles.noReviewsText}>No reviews yet</Text>
       )}
+      <View style={[
+        styles.statusPill,
+        statusLabel === 'working' && styles.statusPillWorking,
+        statusLabel === 'broken' && styles.statusPillBroken,
+      ]}>
+        <Ionicons
+          name={statusLabel === 'broken' ? 'warning-outline' : 'checkmark-circle-outline'}
+          size={12}
+          color={statusLabel === 'broken' ? '#A33A2F' : GREEN}
+        />
+        <Text style={[
+          styles.statusPillText,
+          statusLabel === 'broken' && styles.statusPillTextBroken,
+        ]}>
+          {statusLabel}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -225,6 +264,8 @@ const StationMarker = memo(function StationMarker({
 // ─── Main screen ──────────────────────────────────────────────────────────────
 export default function MapScreen() {
   const [reviewsMap,         setReviewsMap]         = useState({});
+  const [stationStatusMap,   setStationStatusMap]   = useState({});
+  const [favoriteStationIds, setFavoriteStationIds] = useState(new Set());
   const [myFriendIds,        setMyFriendIds]         = useState([]);
 
   // Cache of reviewer profiles, keyed by uid. Built once per uid and reused
@@ -249,6 +290,7 @@ export default function MapScreen() {
   const [selectedStation,    setSelectedStation]     = useState(null);
   const [modalMode,          setModalMode]           = useState('list');
   const [draftRating,        setDraftRating]         = useState(5);
+  const [draftStatus,        setDraftStatus]         = useState('working');
   const [draftComment,       setDraftComment]        = useState('');
   const [isSubmitting,       setIsSubmitting]        = useState(false);
   const [reviewFilterMode,   setReviewFilterMode]    = useState('all');
@@ -306,11 +348,23 @@ export default function MapScreen() {
       );
       setReviewsMap(map);
 
+      const statusEntries = await Promise.all(
+        refillStations.map(async (s) => [s.id, await getStationStatusSummary(s.id)])
+      );
+      setStationStatusMap(Object.fromEntries(statusEntries));
+
       // Warm the profile cache for every reviewer across all stations.
       loadMissingProfiles(Object.values(map).flat());
 
       const uid = auth.currentUser?.uid;
-      if (uid) setMyFriendIds(await getUserFriendsList(uid));
+      if (uid) {
+        const [friendIds, favoriteIds] = await Promise.all([
+          getUserFriendsList(uid),
+          getFavoriteStations(uid),
+        ]);
+        setMyFriendIds(friendIds);
+        setFavoriteStationIds(new Set(favoriteIds));
+      }
 
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -428,6 +482,7 @@ export default function MapScreen() {
     setModalMode(mode);
     setReviewFilterMode('all');
     setDraftRating(5);
+    setDraftStatus('working');
     setDraftComment('');
     setReviewModalVisible(true);
   }, []);
@@ -437,10 +492,12 @@ export default function MapScreen() {
     setIsSubmitting(true);
     try {
       await addReviewForStation(
-        selectedStation.id, draftRating, draftComment, auth.currentUser?.uid
+        selectedStation.id, draftRating, draftComment, auth.currentUser?.uid, draftStatus
       );
       const fresh = await getReviewsForStation(selectedStation.id);
       setReviewsMap((prev) => ({ ...prev, [selectedStation.id]: fresh }));
+      const freshStatus = await getStationStatusSummary(selectedStation.id);
+      setStationStatusMap((prev) => ({ ...prev, [selectedStation.id]: freshStatus }));
       // Make sure the just-added reviewer's profile is cached for display.
       loadMissingProfiles(fresh);
       setReviewModalVisible(false);
@@ -450,6 +507,35 @@ export default function MapScreen() {
       setIsSubmitting(false);
     }
   };
+
+  const toggleFavorite = useCallback(async (stationId) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !stationId) return;
+    const nextFavorite = !favoriteStationIds.has(stationId);
+    setFavoriteStationIds((prev) => {
+      const next = new Set(prev);
+      if (nextFavorite) next.add(stationId);
+      else next.delete(stationId);
+      return next;
+    });
+    try {
+      await setFavoriteStation(uid, stationId, nextFavorite);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [favoriteStationIds]);
+
+  const markStationStatus = useCallback(async (stationId, status) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !stationId) return;
+    try {
+      await setStationStatus(stationId, uid, status);
+      const freshStatus = await getStationStatusSummary(stationId);
+      setStationStatusMap((prev) => ({ ...prev, [stationId]: freshStatus }));
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   // ── Markers — keep every station mounted. Expo Go/react-native-maps can hard
   // crash when many custom markers are unmounted/remounted during filter changes.
@@ -490,9 +576,12 @@ export default function MapScreen() {
   const activeTray = useMemo(() => {
     if (!activeStation) return null;
     const revs  = reviewsMap[activeStation.id] || [];
+    const statusSummary = stationStatusMap[activeStation.id];
     const count = revs.length;
     const avg   = avgRating(revs);
     const dist  = sortedStations.find((s) => s.id === activeStation.id)?.distanceMiles;
+    const isFavorite = favoriteStationIds.has(activeStation.id);
+    const statusLabel = stationStatusLabel(statusSummary);
 
     return (
       <View style={styles.tray}>
@@ -514,11 +603,46 @@ export default function MapScreen() {
                 ) : (
                   <Text style={styles.trayMetaText}>No reviews yet</Text>
                 )}
+                <Text style={styles.trayMetaDot}>·</Text>
+                <Text style={[
+                  styles.trayStatusText,
+                  statusLabel === 'broken' && styles.trayStatusBroken,
+                ]}>
+                  {statusLabel}
+                </Text>
               </View>
             </View>
 
+            <Pressable
+              style={[styles.trayBookmark, isFavorite && styles.trayBookmarkActive]}
+              onPress={() => toggleFavorite(activeStation.id)}
+              hitSlop={10}
+            >
+              <Ionicons
+                name={isFavorite ? 'bookmark' : 'bookmark-outline'}
+                size={18}
+                color={isFavorite ? '#FFFFFF' : GREEN}
+              />
+            </Pressable>
             <Pressable style={styles.trayClose} onPress={() => setActiveStationId(null)} hitSlop={12}>
               <Ionicons name="close" size={18} color={TEXT_MUTED} />
+            </Pressable>
+          </View>
+
+          <View style={styles.statusActionRow}>
+            <Pressable
+              style={styles.statusAction}
+              onPress={() => markStationStatus(activeStation.id, 'working')}
+            >
+              <Ionicons name="checkmark-circle-outline" size={14} color={GREEN} />
+              <Text style={styles.statusActionText}>working</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.statusAction, styles.statusActionBroken]}
+              onPress={() => markStationStatus(activeStation.id, 'broken')}
+            >
+              <Ionicons name="warning-outline" size={14} color="#A33A2F" />
+              <Text style={[styles.statusActionText, styles.statusActionTextBroken]}>broken</Text>
             </Pressable>
           </View>
 
@@ -539,7 +663,7 @@ export default function MapScreen() {
         </View>
       </View>
     );
-  }, [activeStation, reviewsMap, sortedStations, openReviewModal]);
+  }, [activeStation, reviewsMap, stationStatusMap, sortedStations, favoriteStationIds, openReviewModal, toggleFavorite, markStationStatus]);
 
   // ── Recenter the map on the user's current location ──────────────────────────
   // No-ops gracefully if location is unavailable (permission denied / not ready).
@@ -561,6 +685,8 @@ export default function MapScreen() {
     <StationCard
       station={item}
       reviews={reviewsMap[item.id]}
+      statusSummary={stationStatusMap[item.id]}
+      isFavorite={favoriteStationIds.has(item.id)}
       isActive={item.id === activeStationId}
       locationLoading={locationLoading && !userLocation && !locationError}
       onPress={() => {
@@ -568,7 +694,7 @@ export default function MapScreen() {
         openReviewModal(item, 'list');
       }}
     />
-  ), [reviewsMap, activeStationId, locationLoading, userLocation, locationError, openReviewModal]);
+  ), [reviewsMap, stationStatusMap, favoriteStationIds, activeStationId, locationLoading, userLocation, locationError, openReviewModal]);
 
   // ── Active filter summary (for the collapsed button + summary row) ───────────
   const activeRatingLabel = RATING_FILTERS.find((r) => r.key === ratingFilter)?.label;
@@ -871,6 +997,14 @@ export default function MapScreen() {
                             ? <Text style={styles.reviewCardComment}>{r.comment}</Text>
                             : <Text style={styles.reviewCardCommentEmpty}>No comment left</Text>
                           }
+                          {r.status ? (
+                            <Text style={[
+                              styles.reviewStatusText,
+                              r.status === 'broken' && styles.reviewStatusBroken,
+                            ]}>
+                              marked {r.status}
+                            </Text>
+                          ) : null}
                         </View>
                       ));
                     })()}
@@ -882,7 +1016,7 @@ export default function MapScreen() {
                     </Pressable>
                     <Pressable
                       style={styles.submitBtn}
-                      onPress={() => { setModalMode('write'); setDraftRating(5); setDraftComment(''); }}
+                      onPress={() => { setModalMode('write'); setDraftRating(5); setDraftStatus('working'); setDraftComment(''); }}
                     >
                       <Text style={styles.submitBtnText}>Write Review</Text>
                     </Pressable>
@@ -897,6 +1031,28 @@ export default function MapScreen() {
                         <Text style={[styles.star, star <= draftRating && styles.starSelected]}>★</Text>
                       </Pressable>
                     ))}
+                  </View>
+
+                  <View style={styles.statusToggleRow}>
+                    {['working', 'broken'].map((status) => {
+                      const active = draftStatus === status;
+                      return (
+                        <Pressable
+                          key={status}
+                          style={[styles.statusToggle, active && styles.statusToggleActive]}
+                          onPress={() => setDraftStatus(status)}
+                        >
+                          <Ionicons
+                            name={status === 'working' ? 'checkmark-circle-outline' : 'warning-outline'}
+                            size={14}
+                            color={active ? '#FFFFFF' : status === 'working' ? GREEN : '#A33A2F'}
+                          />
+                          <Text style={[styles.statusToggleText, active && styles.statusToggleTextActive]}>
+                            {status}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
                   </View>
 
                   <TextInput
@@ -1077,13 +1233,59 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: TEXT_MUTED,
   },
+  trayStatusText: {
+    fontSize: 12,
+    color: GREEN,
+    fontWeight: '700',
+  },
+  trayStatusBroken: {
+    color: '#A33A2F',
+  },
   trayMetaDot: {
     fontSize: 12,
     color: TEXT_MUTED,
   },
+  trayBookmark: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: GREEN,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  trayBookmarkActive: {
+    backgroundColor: GREEN,
+  },
   trayClose: {
     marginLeft: 8,
     padding: 4,
+  },
+  statusActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  statusAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: GREEN_LIGHT,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  statusActionBroken: {
+    backgroundColor: '#FCEBE8',
+  },
+  statusActionText: {
+    color: GREEN,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusActionTextBroken: {
+    color: '#A33A2F',
   },
   trayBtnRow: {
     flexDirection: 'row',
@@ -1315,6 +1517,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 5,
   },
+  cardBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: 8,
+  },
   cardName: {
     fontSize: 15,
     fontWeight: '700',
@@ -1335,6 +1543,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#B45309',
   },
+  favoriteBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: GREEN,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   cardMeta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1349,6 +1565,31 @@ const styles = StyleSheet.create({
     color: TEXT_MUTED,
     fontStyle: 'italic',
     marginTop: 2,
+  },
+  statusPill: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F0EDE7',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  statusPillWorking: {
+    backgroundColor: GREEN_LIGHT,
+  },
+  statusPillBroken: {
+    backgroundColor: '#FCEBE8',
+  },
+  statusPillText: {
+    color: TEXT_MUTED,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  statusPillTextBroken: {
+    color: '#A33A2F',
   },
 
   // ── Review modal — light cream / green scheme ─────────────────────────────────
@@ -1514,6 +1755,8 @@ const styles = StyleSheet.create({
   reviewCardDate:         { color: TEXT_MUTED, fontSize: 12, marginTop: 1 },
   reviewCardComment:      { color: TEXT_MID, fontSize: 14, lineHeight: 20 },
   reviewCardCommentEmpty: { color: TEXT_MUTED, fontSize: 13, fontStyle: 'italic' },
+  reviewStatusText:       { color: GREEN, fontSize: 12, fontWeight: '700', marginTop: 8 },
+  reviewStatusBroken:     { color: '#A33A2F' },
 
   // ── Write-review form ─────────────────────────────────────────────────────────
   writeHint: {
@@ -1530,6 +1773,35 @@ const styles = StyleSheet.create({
   },
   star:         { fontSize: 42, color: '#D8D2C6' },
   starSelected: { color: '#F5A623' },
+  statusToggleRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  statusToggle: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#E0DDD8',
+    borderRadius: 10,
+    paddingVertical: 10,
+    backgroundColor: CARD_BG,
+  },
+  statusToggleActive: {
+    backgroundColor: GREEN,
+    borderColor: GREEN,
+  },
+  statusToggleText: {
+    color: TEXT_MID,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  statusToggleTextActive: {
+    color: '#FFFFFF',
+  },
   modalInput: {
     backgroundColor: CARD_BG,
     color: TEXT_DARK,
