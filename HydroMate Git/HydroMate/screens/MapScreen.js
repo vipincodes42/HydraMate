@@ -63,8 +63,53 @@ function distanceMiles(lat1, lng1, lat2, lng2) {
 }
 
 function avgRating(reviews) {
-  if (!reviews || reviews.length === 0) return null;
-  return (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1);
+  const list = Array.isArray(reviews) ? reviews : [];
+  const ratings = list
+    .map((r) => Number(r?.rating))
+    .filter((rating) => Number.isFinite(rating));
+  if (ratings.length === 0) return null;
+  return (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1);
+}
+
+// ─── Station filters ──────────────────────────────────────────────────────────
+// Area pills — "All" plus the UCSD area tags written into data/refillStations.js
+// by scripts/tagRefillStations.js.
+const AREA_FILTERS = [
+  'All', 'Seventh', 'Marshall', 'ERC', 'Warren', 'Sixth', 'Revelle', 'Eighth',
+  'Dining Hall', 'Scripps', 'Med Campus', 'Price Center', 'Athletics', 'Other',
+];
+
+// Rating pills — `key` is 'all', 'none', or a numeric "& up" threshold.
+const RATING_FILTERS = [
+  { key: 'all',  label: 'All Ratings' },
+  { key: 4,      label: '4★ & up' },
+  { key: 3,      label: '3★ & up' },
+  { key: 2,      label: '2★ & up' },
+  { key: 1,      label: '1★ & up' },
+  { key: 'none', label: 'No Reviews' },
+];
+
+// True when a station carries the selected area tag ('All' matches everything).
+function passesArea(station, areaFilter) {
+  if (areaFilter === 'All') return true;
+  const stationTags = Array.isArray(station.tags) ? station.tags : [];
+  return stationTags.includes(areaFilter);
+}
+
+// True when a station's reviews satisfy the selected rating filter.
+// Defensive: `reviews` may be undefined (station not yet loaded) or contain
+// malformed entries — never let that throw during filtering.
+function passesRating(reviews, ratingFilter) {
+  const list = Array.isArray(reviews) ? reviews : [];
+  const ratings = list
+    .map((r) => Number(r?.rating))
+    .filter((rating) => Number.isFinite(rating));
+  const count = ratings.length;
+  if (ratingFilter === 'all')  return true;
+  if (ratingFilter === 'none') return count === 0;   // unreviewed stations only
+  if (count === 0) return false;                     // a threshold needs reviews
+  const avg = ratings.reduce((sum, rating) => sum + rating, 0) / count;
+  return avg >= ratingFilter;
 }
 
 // Resolve a reviewer's display label from their profile node.
@@ -146,6 +191,13 @@ export default function MapScreen() {
   // Store only the ID — prevents stale object refs from causing re-renders
   const [activeStationId,    setActiveStationId]     = useState(null);
 
+  // Nearby-list filters — area tag + star rating, both default to "show all".
+  const [areaFilter,         setAreaFilter]          = useState('All');
+  const [ratingFilter,       setRatingFilter]        = useState('all');
+  // Filter panel is collapsed by default; collapsing only hides the UI — the
+  // selected filters above stay applied either way.
+  const [showFilters,        setShowFilters]         = useState(false);
+
   const [userLocation,       setUserLocation]        = useState(null);
   const [locationLoading,    setLocationLoading]     = useState(true);
   const [locationError,      setLocationError]       = useState(null);
@@ -190,6 +242,16 @@ export default function MapScreen() {
     setProfiles((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
   }, []);
 
+  // ── Debug: warn once if any station is missing a usable `tags` array ─────────
+  useEffect(() => {
+    console.log('[FILTER] area filters:', AREA_FILTERS);
+    console.log('[FILTER] 3rd area filter:', AREA_FILTERS[2], '| type:', typeof AREA_FILTERS[2]);
+    const missing = refillStations.filter((s) => !Array.isArray(s.tags));
+    if (missing.length) {
+      console.warn('[FILTER] stations missing tags[]:', missing.map((s) => s.id));
+    }
+  }, []);
+
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function init() {
@@ -229,7 +291,7 @@ export default function MapScreen() {
 
   // ── Sorted stations ──────────────────────────────────────────────────────────
   const sortedStations = useMemo(() => {
-    if (!userLocation) return refillStations;
+    if (!userLocation) return [...refillStations];
     return [...refillStations]
       .map((s) => ({
         ...s,
@@ -239,6 +301,33 @@ export default function MapScreen() {
       }))
       .sort((a, b) => a.distanceMiles - b.distanceMiles);
   }, [userLocation]);
+
+  // ── Filtered stations ────────────────────────────────────────────────────────
+  // Apply the area + rating filters AFTER distance sorting, so the nearby order
+  // is preserved within the filtered subset.
+  const filteredStations = useMemo(
+    () => sortedStations.filter(
+      (s) => passesArea(s, areaFilter) && passesRating(reviewsMap[s.id], ratingFilter)
+    ),
+    [sortedStations, areaFilter, ratingFilter, reviewsMap]
+  );
+
+  const filteredStationIds = useMemo(
+    () => new Set(filteredStations.map((station) => station.id)),
+    [filteredStations]
+  );
+
+  // ── Keep the active selection consistent with the filters ────────────────────
+  // If the filters exclude the currently-selected station, clear the detail tray
+  // so the active state always matches the filtered nearby list.
+  // The update is conditional and idempotent, so it cannot loop.
+  useEffect(() => {
+    console.log('[FILTER] visible stations:', filteredStations.length);
+    if (activeStationId && !filteredStations.some((s) => s.id === activeStationId)) {
+      console.log('[FILTER] active station', activeStationId, 'filtered out → clearing selection');
+      setActiveStationId(null);
+    }
+  }, [activeStationId, filteredStations]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -254,11 +343,14 @@ export default function MapScreen() {
     );
     markerJustPressed.current = true;
     setActiveStationId(stationId);
-    const idx = sortedStations.findIndex((s) => s.id === stationId);
-    if (idx >= 0 && listRef.current) {
+    // Index into the filtered list. Bounds-check defensively: scrollToIndex
+    // throws if the index is out of range, so never call it for a station
+    // missing from the current list.
+    const idx = filteredStations.findIndex((s) => s.id === stationId);
+    if (idx >= 0 && idx < filteredStations.length && listRef.current) {
       listRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0.1 });
     }
-  }, [sortedStations, activeStationId]);
+  }, [filteredStations, activeStationId]);
 
   // Map background tapped: only dismiss if it was truly an open-area tap
   const handleMapPress = useCallback(() => {
@@ -300,22 +392,27 @@ export default function MapScreen() {
     }
   };
 
-  // ── Markers — rendered from refillStations so coordinates are always stable.
+  // ── Markers — keep every station mounted. Expo Go/react-native-maps can hard
+  // crash when many custom markers are unmounted/remounted during filter changes.
+  // The list is filtered; non-matching map markers are faded in place.
   // tracksViewChanges is intentionally omitted (defaults to true on both platforms).
   // Flipping it false→true when isActive changes caused the native layer to recapture
   // the view before layout completed, placing the marker at the map's screen origin.
-  const markerElements = useMemo(() => refillStations.map((station) => {
+  const markerElements = useMemo(() => sortedStations.map((station) => {
     const revs     = reviewsMap[station.id] || [];
     const avg      = avgRating(revs);
     const isActive = station.id === activeStationId;
+    const isFilteredIn = filteredStationIds.has(station.id);
 
     return (
       <Marker
         key={station.id}
         coordinate={{ latitude: station.latitude, longitude: station.longitude }}
-        onPress={() => handleMarkerPress(station.id)}
+        onPress={() => {
+          if (isFilteredIn) handleMarkerPress(station.id);
+        }}
       >
-        <View style={styles.markerRoot}>
+        <View style={[styles.markerRoot, !isFilteredIn && styles.markerRootDimmed]}>
           <View style={[styles.markerPin, isActive && styles.markerPinActive]}>
             <Ionicons name="water" size={14} color={isActive ? '#FFFFFF' : GREEN} />
           </View>
@@ -329,7 +426,7 @@ export default function MapScreen() {
         </View>
       </Marker>
     );
-  }), [reviewsMap, activeStationId, handleMarkerPress]);
+  }), [sortedStations, filteredStationIds, reviewsMap, activeStationId, handleMarkerPress]);
 
   // ── Station detail tray (active station info above the list) ─────────────────
   const activeTray = useMemo(() => {
@@ -415,6 +512,14 @@ export default function MapScreen() {
     />
   ), [reviewsMap, activeStationId, locationLoading, userLocation, locationError, openReviewModal]);
 
+  // ── Active filter summary (for the collapsed button + summary row) ───────────
+  const activeRatingLabel = RATING_FILTERS.find((r) => r.key === ratingFilter)?.label;
+  const activeFilters = [
+    ...(areaFilter !== 'All'   ? [areaFilter] : []),
+    ...(ratingFilter !== 'all' ? [activeRatingLabel] : []),
+  ];
+  const filtersAreActive = activeFilters.length > 0;
+
   // ── Derived review summary for the station shown in the modal ────────────────
   const modalReviews = reviewsMap[selectedStation?.id] || [];
   const modalAvg     = avgRating(modalReviews);
@@ -469,11 +574,114 @@ export default function MapScreen() {
       <View style={styles.listWrapper}>
         <View style={styles.listHeader}>
           <Text style={styles.listTitle}>nearby stations</Text>
-          <View style={styles.filterPill}>
-            <Ionicons name="filter-outline" size={12} color={TEXT_MID} />
-            <Text style={styles.filterPillText}>filter</Text>
-          </View>
+
+          {/* Filter toggle — green when open or when filters are active */}
+          <Pressable
+            style={[styles.filterToggle, (showFilters || filtersAreActive) && styles.filterToggleActive]}
+            onPress={() => setShowFilters((v) => !v)}
+            hitSlop={6}
+          >
+            <Ionicons
+              name="options-outline"
+              size={14}
+              color={(showFilters || filtersAreActive) ? '#FFFFFF' : TEXT_MID}
+            />
+            <Text style={[
+              styles.filterToggleText,
+              (showFilters || filtersAreActive) && styles.filterToggleTextActive,
+            ]}>
+              {filtersAreActive ? `Filters • ${activeFilters.length} active` : 'Filters'}
+            </Text>
+            <Ionicons
+              name={showFilters ? 'chevron-up' : 'chevron-down'}
+              size={14}
+              color={(showFilters || filtersAreActive) ? '#FFFFFF' : TEXT_MID}
+            />
+          </Pressable>
         </View>
+
+        {/* ── Collapsed summary — what is filtering while the panel is hidden ── */}
+        {!showFilters && filtersAreActive && (
+          <View style={styles.filterSummaryRow}>
+            <Text style={styles.filterSummaryText} numberOfLines={1}>
+              {activeFilters.join('  •  ')}
+            </Text>
+            <Text style={styles.filterSummaryCount}>
+              {filteredStations.length} of {refillStations.length}
+            </Text>
+          </View>
+        )}
+
+        {/* ── Expanded filter panel ─────────────────────────────────────── */}
+        {showFilters && (
+          <View style={styles.filterPanel}>
+            <Text style={styles.filterPanelLabel}>AREA</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterPanelRow}
+            >
+              {AREA_FILTERS.map((tag) => {
+                const active = areaFilter === tag;
+                return (
+                  <Pressable
+                    key={tag}
+                    style={[styles.filterChip, active && styles.filterChipActive]}
+                    onPress={() => {
+                      console.log('[FILTER PRESS BEFORE]', areaFilter, '->', tag);
+                      console.log('[FILTER] pressed area value:', tag, '| type:', typeof tag);
+                      setAreaFilter(tag);
+                      console.log('[FILTER PRESS AFTER REQUESTED]', tag);
+                    }}
+                  >
+                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                      {tag}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Text style={styles.filterPanelLabel}>RATING</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterPanelRow}
+            >
+              {RATING_FILTERS.map((rf) => {
+                const active = ratingFilter === rf.key;
+                return (
+                  <Pressable
+                    key={String(rf.key)}
+                    style={[styles.filterChip, active && styles.filterChipActive]}
+                    onPress={() => {
+                      console.log('[FILTER] rating:', ratingFilter, '→', rf.key);
+                      setRatingFilter(rf.key);
+                    }}
+                  >
+                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                      {rf.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.filterPanelFooter}>
+              <Text style={styles.filterPanelCount}>
+                {filteredStations.length} of {refillStations.length} shown
+              </Text>
+              <Pressable
+                style={styles.clearBtn}
+                onPress={() => { setAreaFilter('All'); setRatingFilter('all'); }}
+                hitSlop={6}
+              >
+                <Ionicons name="refresh-outline" size={13} color={GREEN} />
+                <Text style={styles.clearBtnText}>Clear filters</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         {locationError ? (
           <View style={styles.locationBanner}>
@@ -484,12 +692,20 @@ export default function MapScreen() {
 
         <FlatList
           ref={listRef}
-          data={sortedStations}
+          data={filteredStations}
           keyExtractor={(s) => String(s.id)}
           renderItem={renderCard}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           onScrollToIndexFailed={() => {}}
+          ListEmptyComponent={
+            <View style={styles.emptyFilterContainer}>
+              <Ionicons name="water-outline" size={32} color={GREEN} style={{ marginBottom: 8 }} />
+              <Text style={styles.emptyFilterText}>
+                No stations match these filters.
+              </Text>
+            </View>
+          }
         />
       </View>
 
@@ -667,6 +883,9 @@ const styles = StyleSheet.create({
 
   // ── Markers ──────────────────────────────────────────────────────────────────
   markerRoot: { alignItems: 'center' },
+  markerRootDimmed: {
+    opacity: 0.28,
+  },
   markerPin: {
     width: 30,
     height: 30,
@@ -856,26 +1075,137 @@ const styles = StyleSheet.create({
     color: TEXT_DARK,
     letterSpacing: -0.3,
   },
-  filterPill: {
+  // ── Filter toggle button ──────────────────────────────────────────────────────
+  filterToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: CARD_BG,
+    borderWidth: 1,
+    borderColor: '#E0DDD8',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  filterToggleActive: {
+    backgroundColor: GREEN,
+    borderColor: GREEN,
+  },
+  filterToggleText: {
+    fontSize: 12.5,
+    color: TEXT_MID,
+    fontWeight: '600',
+  },
+  filterToggleTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+
+  // ── Collapsed active-filter summary row ───────────────────────────────────────
+  filterSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  filterSummaryText: {
+    fontSize: 12.5,
+    color: GREEN,
+    fontWeight: '700',
+    flex: 1,
+    marginRight: 8,
+  },
+  filterSummaryCount: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    fontWeight: '600',
+  },
+
+  // ── Expanded filter panel ─────────────────────────────────────────────────────
+  filterPanel: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    backgroundColor: CARD_BG,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E0DDD8',
+    paddingTop: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  filterPanelLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: TEXT_MUTED,
+    letterSpacing: 0.6,
+    paddingHorizontal: 14,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  filterPanelRow: {
+    paddingHorizontal: 14,
+    paddingBottom: 4,
+    gap: 8,
+  },
+  filterPanelFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F0EDE7',
+  },
+  filterPanelCount: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    fontWeight: '600',
+  },
+  clearBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+  },
+  clearBtnText: {
+    color: GREEN,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // ── Filter pills (area tags + star rating) ───────────────────────────────────
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
     backgroundColor: CARD_BG,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#E0DDD8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.07,
-    shadowRadius: 2,
-    elevation: 1,
   },
-  filterPillText: {
-    fontSize: 12,
+  filterChipActive: {
+    backgroundColor: GREEN,
+    borderColor: GREEN,
+  },
+  filterChipText: {
+    fontSize: 12.5,
     color: TEXT_MID,
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  emptyFilterContainer: {
+    paddingTop: 48,
+    alignItems: 'center',
+  },
+  emptyFilterText: {
+    fontSize: 14,
+    color: TEXT_MID,
   },
   locationBanner: {
     flexDirection: 'row',
