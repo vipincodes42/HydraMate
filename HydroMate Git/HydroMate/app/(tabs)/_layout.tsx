@@ -55,6 +55,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="coaster"
+        options={{
+          tabBarLabel: 'coaster',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="bluetooth-outline" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
