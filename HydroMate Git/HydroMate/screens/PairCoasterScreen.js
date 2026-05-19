@@ -56,6 +56,16 @@ export default function PairCoasterScreen() {
     setStatus('scanning');
     setErrorMsg('');
 
+    // Wait for Bluetooth to be powered on before scanning
+    const bleState = await manager.state();
+    if (bleState !== 'PoweredOn') {
+      await new Promise((resolve) => {
+        const sub = manager.onStateChange((state) => {
+          if (state === 'PoweredOn') { sub.remove(); resolve(); }
+        }, true);
+      });
+    }
+
     scanTimeout.current = setTimeout(() => {
       manager.stopDeviceScan();
       setStatus('error');
@@ -77,15 +87,22 @@ export default function PairCoasterScreen() {
 
         try {
           const connected = await device.connect();
+          await connected.requestMTU(512);
           await connected.discoverAllServicesAndCharacteristics();
           const encoded = btoa(uid);
-          await connected.writeCharacteristicWithResponseForService(
+          // Use withoutResponse since ESP32 reboots immediately after receiving UID
+          await connected.writeCharacteristicWithoutResponseForService(
             SERVICE_UUID, CHAR_UUID, encoded
           );
           setStatus('success');
         } catch (e) {
-          setStatus('error');
-          setErrorMsg(e.message);
+          // Disconnect error after write = ESP32 rebooted after saving UID = success
+          if (e.message?.includes('disconnected')) {
+            setStatus('success');
+          } else {
+            setStatus('error');
+            setErrorMsg(e.message);
+          }
         }
       }
     });

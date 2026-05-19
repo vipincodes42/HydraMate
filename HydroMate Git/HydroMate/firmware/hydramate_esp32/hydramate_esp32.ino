@@ -125,7 +125,8 @@ void runBLEProvisioning() {
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(BLE_SERVICE_UUID);
   BLECharacteristic *pChar = pService->createCharacteristic(
-    BLE_CHAR_UUID, BLECharacteristic::PROPERTY_WRITE
+    BLE_CHAR_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
   pChar->setCallbacks(new UIDWriteCallback());
   pService->start();
@@ -165,8 +166,11 @@ void setup() {
     ESP.restart();
   }
 
-  // Load saved UID from flash — if none, enter BLE pairing mode
+  // Load saved UID from flash — clear on power cycle for demo, keep on software restart
   preferences.begin("hydramate", false);
+  if (esp_reset_reason() == ESP_RST_POWERON) {
+    preferences.clear();  // power cycle = fresh pairing for demo
+  }
   userUID = preferences.getString("uid", "");
   if (userUID.length() == 0) {
     runBLEProvisioning();  // never returns — ESP.restart() exits it
