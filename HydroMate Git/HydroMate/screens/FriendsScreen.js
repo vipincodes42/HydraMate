@@ -199,7 +199,7 @@ export default function FriendsScreen() {
                     </View>
                     <Text style={styles.challengeSub}>collective hydration goal</Text>
                     <View style={styles.challengeMlRow}>
-                        <Text style={styles.challengeMl}>{teamTotal.toLocaleString()}ml</Text>
+                        <Text style={styles.challengeMl}>{Math.round(teamTotal).toLocaleString()}ml</Text>
                         <Text style={styles.challengeGoal}> / {TEAM_GOAL_ML.toLocaleString()}ml</Text>
                     </View>
                     <View style={styles.challengeBarBg}>

@@ -20,7 +20,7 @@ import { refillStations } from '../data/refillStations';
 import {
   addReviewForStation,
   getFavoriteStations,
-  getReviewsForStation,
+  subscribeToAllReviews,
   getStationStatusSummary,
   getUserFriendsList,
   getUserProfile,
@@ -337,34 +337,37 @@ export default function MapScreen() {
     }
   }, []);
 
+  // ── Live reviews subscription — waits for auth before subscribing ─────────────
+  useEffect(() => {
+    let reviewUnsub = () => {};
+    const authUnsub = auth.onAuthStateChanged((user) => {
+      reviewUnsub();
+      if (!user) return;
+      reviewUnsub = subscribeToAllReviews((map) => {
+        setReviewsMap(map);
+        loadMissingProfiles(Object.values(map).flat());
+      });
+    });
+    return () => { reviewUnsub(); authUnsub(); };
+  }, [loadMissingProfiles]);
+
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    async function init() {
-      const map = {};
-      await Promise.all(
-        refillStations.map(async (s) => {
-          map[s.id] = await getReviewsForStation(s.id);
-        })
-      );
-      setReviewsMap(map);
+    const authUnsub = auth.onAuthStateChanged(async (user) => {
+      if (!user) return;
+      authUnsub(); // run once — don't re-init on token refresh
 
       const statusEntries = await Promise.all(
         refillStations.map(async (s) => [s.id, await getStationStatusSummary(s.id)])
       );
       setStationStatusMap(Object.fromEntries(statusEntries));
 
-      // Warm the profile cache for every reviewer across all stations.
-      loadMissingProfiles(Object.values(map).flat());
-
-      const uid = auth.currentUser?.uid;
-      if (uid) {
-        const [friendIds, favoriteIds] = await Promise.all([
-          getUserFriendsList(uid),
-          getFavoriteStations(uid),
-        ]);
-        setMyFriendIds(friendIds);
-        setFavoriteStationIds(new Set(favoriteIds));
-      }
+      const [friendIds, favoriteIds] = await Promise.all([
+        getUserFriendsList(user.uid),
+        getFavoriteStations(user.uid),
+      ]);
+      setMyFriendIds(friendIds);
+      setFavoriteStationIds(new Set(favoriteIds));
 
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -382,9 +385,9 @@ export default function MapScreen() {
       } finally {
         setLocationLoading(false);
       }
-    }
-    init();
-  }, [loadMissingProfiles]);
+    });
+    return authUnsub;
+  }, []);
 
   // ── Sorted stations ──────────────────────────────────────────────────────────
   const sortedStations = useMemo(() => {
@@ -494,12 +497,8 @@ export default function MapScreen() {
       await addReviewForStation(
         selectedStation.id, draftRating, draftComment, auth.currentUser?.uid, draftStatus
       );
-      const fresh = await getReviewsForStation(selectedStation.id);
-      setReviewsMap((prev) => ({ ...prev, [selectedStation.id]: fresh }));
       const freshStatus = await getStationStatusSummary(selectedStation.id);
       setStationStatusMap((prev) => ({ ...prev, [selectedStation.id]: freshStatus }));
-      // Make sure the just-added reviewer's profile is cached for display.
-      loadMissingProfiles(fresh);
       setReviewModalVisible(false);
     } catch (e) {
       console.error(e);
@@ -896,8 +895,8 @@ export default function MapScreen() {
 
       {/* ── REVIEW MODAL ────────────────────────────────────────────────── */}
       <Modal visible={reviewModalVisible} animationType="slide" transparent>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalOverlay}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={Keyboard.dismiss} />
             <View style={styles.modalContent}>
               {/* ── Header — station name always shown clearly at the top ──── */}
               <Text style={styles.modalLabel}>
@@ -1082,7 +1081,6 @@ export default function MapScreen() {
               )}
             </View>
           </View>
-        </TouchableWithoutFeedback>
       </Modal>
 
     </View>
@@ -1603,6 +1601,7 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: CREAM,
     width: '100%',
+    maxHeight: '88%',
     borderRadius: 22,
     padding: 22,
     shadowColor: '#000',
@@ -1705,7 +1704,7 @@ const styles = StyleSheet.create({
   },
 
   reviewsListContainer: {
-    maxHeight: 320,
+    maxHeight: Math.round(Dimensions.get('window').height * 0.38),
     marginBottom: 18,
   },
   emptyStateContainer: {

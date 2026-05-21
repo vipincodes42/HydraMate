@@ -11,12 +11,12 @@
 // #define WIFI_PASSWORD   "brjm0403"
 #define WIFI_SSID "garrison"
 #define WIFI_PASSWORD "garrison"
-#define DATABASE_URL    "https://hydramate-ca0c1-default-rtdb.firebaseio.com/"
+#define DATABASE_URL "https://hydramate-ca0c1-default-rtdb.firebaseio.com/"
 #define DATABASE_SECRET "TjVfOJqayQzq5Q3G48R1J1eC9gVKogfbcjSATXu6"
 
 // BLE service/characteristic UUIDs — the app uses these to find and write the UID
-#define BLE_SERVICE_UUID    "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define BLE_CHAR_UUID       "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define BLE_SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define BLE_CHAR_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // Hardcoded UID for testing — remove once BLE pairing is working
 #define HARDCODED_UID "QC5oLsI1MReID21ipSVc8QaXm6D2"
@@ -26,12 +26,12 @@
 
 // HX711 pins
 #define DOUT_PIN 4
-#define SCK_PIN  5
+#define SCK_PIN 5
 
 // LED strip
-#define LED_PIN      18
-#define NUM_LEDS     4
-#define BRIGHTNESS   30    // low power mode: 30/255 (~12%)
+#define LED_PIN 18
+#define NUM_LEDS 4
+#define BRIGHTNESS 30  // low power mode: 30/255 (~12%)
 
 CRGB leds[NUM_LEDS];
 
@@ -44,9 +44,15 @@ Preferences preferences;
 String userUID = "";
 
 float totalDrunkMl = 0;
-float lastWeight   = 0;
-unsigned long lastSend  = 0;
+float lastWeight = 0;
+float lastBottleWeight = 0;
+unsigned long lastSend = 0;
 unsigned long lastDrink = 0;
+bool bottleSettling = false;
+float settleLastReading = 0;
+unsigned long settleStableStart = 0;
+float settleSum = 0;
+int settleSamples = 0;
 bool alertActive = false;
 
 // ── LED animations ────────────────────────────────────────────────────────────
@@ -55,7 +61,7 @@ void setAllLEDs(CRGB color) {
   for (int i = 0; i < NUM_LEDS; i++) leds[i] = color;
   FastLED.show();
 }
-  
+
 void flashBlue() {
   setAllLEDs(CRGB::Blue);
   delay(500);
@@ -67,19 +73,19 @@ void breatheGreen() {
   static int direction = 1;
   brightness += direction * 3;
   if (brightness >= 80) direction = -1;
-  if (brightness <= 0)  direction = 1;
+  if (brightness <= 0) direction = 1;
   for (int i = 0; i < NUM_LEDS; i++) leds[i] = CRGB(0, brightness, 0);
   FastLED.show();
 }
 
-void pulseRed() {
-  static int brightness = 0;
-  static int direction = 1;
-  brightness += direction * 8;
-  if (brightness >= 80) direction = -1;
-  if (brightness <= 0)  direction = 1;
-  for (int i = 0; i < NUM_LEDS; i++) leds[i] = CRGB(brightness, 0, 0);
-  FastLED.show();
+void strobeRed() {
+  static bool ledOn = false;
+  static unsigned long lastToggle = 0;
+  if (millis() - lastToggle >= 250) {
+    ledOn = !ledOn;
+    setAllLEDs(ledOn ? CRGB(200, 0, 0) : CRGB::Black);
+    lastToggle = millis();
+  }
 }
 
 void breatheCyan() {
@@ -87,7 +93,7 @@ void breatheCyan() {
   static int direction = 1;
   brightness += direction * 3;
   if (brightness >= 80) direction = -1;
-  if (brightness <= 0)  direction = 1;
+  if (brightness <= 0) direction = 1;
   for (int i = 0; i < NUM_LEDS; i++) leds[i] = CRGB(0, brightness, brightness);
   FastLED.show();
 }
@@ -97,11 +103,49 @@ void pulsePurple() {
   static int direction = 1;
   brightness += direction * 5;
   if (brightness >= 80) direction = -1;
-  if (brightness <= 0)  direction = 1;
+  if (brightness <= 0) direction = 1;
   for (int i = 0; i < NUM_LEDS; i++) leds[i] = CRGB(brightness, 0, brightness);
   FastLED.show();
 }
 
+
+void calibrate() {
+  Serial.println("Calibration: place your bottle on the coaster");
+  float prev = scale.get_units(3);
+  unsigned long stableStart = 0;
+  unsigned long lastFlash = 0;
+  unsigned long lastRead = 0;
+  bool flashOn = false;
+
+  while (true) {
+    unsigned long now = millis();
+
+    if (now - lastFlash >= 300) {
+      flashOn = !flashOn;
+      setAllLEDs(flashOn ? CRGB(80, 60, 0) : CRGB::Black);
+      lastFlash = now;
+    }
+
+    if (now - lastRead >= 400) {
+      float curr = scale.get_units(3);
+      if (curr > 30 && fabsf(curr - prev) < 15) {
+        if (stableStart == 0) stableStart = now;
+        if (now - stableStart >= 2000) {
+          scale.tare();
+          Serial.println("Calibrated — bottle zeroed");
+          setAllLEDs(CRGB::Green);
+          delay(1000);
+          setAllLEDs(CRGB::Black);
+          return;
+        }
+      } else {
+        stableStart = 0;
+      }
+      prev = curr;
+      lastRead = now;
+    }
+  }
+}
 
 // ── BLE provisioning ─────────────────────────────────────────────────────────
 
@@ -126,8 +170,7 @@ void runBLEProvisioning() {
   BLEService *pService = pServer->createService(BLE_SERVICE_UUID);
   BLECharacteristic *pChar = pService->createCharacteristic(
     BLE_CHAR_UUID,
-    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
-  );
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
   pChar->setCallbacks(new UIDWriteCallback());
   pService->start();
 
@@ -202,10 +245,11 @@ void setup() {
 
   // Scale
   scale.begin(DOUT_PIN, SCK_PIN);
-  scale.set_scale(2280.f);
+  scale.set_scale(-313.f);
 
   unsigned long tareStart = millis();
-  while (!scale.is_ready() && millis() - tareStart < 3000);
+  while (!scale.is_ready() && millis() - tareStart < 3000)
+    ;
   if (scale.is_ready()) {
     scale.tare();
     Serial.println("Scale ready");
@@ -220,30 +264,65 @@ void loop() {
   float weightG = max(0.0f, (float)scale.get_units(5));
   Serial.printf("ADC: %ld  weight: %.2fg\n", adcRaw, weightG);
 
-  // Sip detection
-  if ((lastWeight - weightG) > 10 && millis() - lastDrink > 2000) {
-    float mlDrunk = lastWeight - weightG;
-    totalDrunkMl += mlDrunk;
-    lastDrink = millis();
-    alertActive = false;
-    Serial.println("Drink detected: " + String(mlDrunk) + " ml");
-    flashBlue();
+  // Sip detection — only on lift-and-return path
+  bool bottleOn = weightG > 30;
+
+  if (lastWeight <= 30 && bottleOn) {
+    // Bottle just placed — enter settling mode
+    bottleSettling = true;
+    settleLastReading = weightG;
+    settleStableStart = 0;
+    settleSum = 0;
+    settleSamples = 0;
+  } else if (!bottleOn) {
+    bottleSettling = false;
+  }
+
+  if (bottleOn && bottleSettling) {
+    if (fabsf(weightG - settleLastReading) < 5) {
+      if (settleStableStart == 0) settleStableStart = millis();
+      settleSum += weightG;
+      settleSamples++;
+      if (millis() - settleStableStart >= 1500 && settleSamples > 0) {
+        float settled = settleSum / settleSamples;
+        bottleSettling = false;
+        float weightDrop = lastBottleWeight - settled;
+        bool hasSip = lastBottleWeight > 0 && weightDrop > 10;
+        bool cooldownDone = millis() - lastDrink > 200;
+        if (hasSip && cooldownDone) {
+          totalDrunkMl += weightDrop;
+          lastDrink = millis();
+          alertActive = false;
+          Serial.println("Drink detected: " + String(weightDrop) + " ml");
+          flashBlue();
+          lastBottleWeight = settled;
+        } else if (!hasSip) {
+          lastBottleWeight = settled;
+        }
+        // if cooldown blocked: keep lastBottleWeight so next settle catches the full drop
+      }
+    } else {
+      settleStableStart = 0;
+      settleSum = 0;
+      settleSamples = 0;
+    }
+    settleLastReading = weightG;
   }
 
   lastWeight = weightG;
 
   // Inactivity alert — 30 minutes no drink
-  if (millis() - lastDrink > 1800000) {
+  if (millis() - lastDrink > 30000) {  // 30 seconds for testing (change back to 1800000 for 30 min)
     alertActive = true;
   }
 
   // LED state
   if (alertActive) {
-    pulseRed();
-  } else if (weightG > 50) {
-    breatheCyan();   // something is on the coaster
+    strobeRed();
+  } else if (weightG > 30) {
+    breatheGreen();  // bottle on coaster
   } else {
-    breatheGreen();  // empty coaster
+    breatheCyan();  // empty coaster, waiting
   }
 
   // Firebase push every 5 seconds
@@ -258,7 +337,8 @@ void loop() {
     }
 
     Firebase.setFloat(fbdo, basePath + "/totalDrankML", round(totalDrunkMl * 100.0) / 100.0);
-    Firebase.setBool(fbdo,  basePath + "/alertActive",  alertActive);
+    Firebase.setBool(fbdo, basePath + "/alertActive", alertActive);
+    Firebase.setInt(fbdo, basePath + "/adcRaw", adcRaw);
   }
 
   delay(20);

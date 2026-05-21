@@ -1,5 +1,14 @@
 import { onAuthStateChanged } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
+import * as Notifications from 'expo-notifications';
+
+Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+    }),
+});
 import {
     Animated,
     Image,
@@ -90,10 +99,12 @@ export default function HomeScreen() {
     }, []);
 
     useEffect(() => {
+        Notifications.requestPermissionsAsync();
+    }, []);
+
+    useEffect(() => {
         if (!uid) return;
-        console.log(`[HOME] Setting up live subscription — UID: ${uid} | path: users/${uid}/live`);
         const unsub = subscribeToLive(uid, (data) => {
-            console.log(`[HOME] Live update received — UID: ${uid} | data:`, JSON.stringify(data));
             setLive(data);
         });
         getTodayReadings(uid).then(setReadings);
@@ -104,7 +115,25 @@ export default function HomeScreen() {
         return () => unsub();
     }, [uid]);
 
-    const drankMl = live?.totalDrankML ?? 0;
+    const alertSent = useRef(false);
+    useEffect(() => {
+        if (live?.alertActive) {
+            if (alertSent.current) return;
+            alertSent.current = true;
+            Notifications.scheduleNotificationAsync({
+                content: {
+                    title: 'Time to drink! 💧',
+                    body: "You haven't had water in 30 minutes.",
+                },
+                trigger: null,
+            });
+        } else {
+            alertSent.current = false;
+            Notifications.dismissAllNotificationsAsync();
+        }
+    }, [live?.alertActive]);
+
+    const drankMl = Math.round(live?.totalDrankML ?? 0);
     const pct = Math.min(drankMl / dailyGoalMl, 1);
     const weightG = live?.weightG;
     const remainingMl = Math.max(dailyGoalMl - drankMl, 0);
@@ -268,7 +297,7 @@ export default function HomeScreen() {
                                 </View>
                                 <View style={styles.activityInfo}>
                                     <View style={styles.activityTitleRow}>
-                                        <Text style={styles.activityMain}>{r.ml}ml consumed</Text>
+                                        <Text style={styles.activityMain}>{Math.round(r.ml)}ml consumed</Text>
                                         <View style={[
                                             styles.sourceBadge,
                                             getActivitySource(r) === 'manual' && styles.sourceBadgeManual,

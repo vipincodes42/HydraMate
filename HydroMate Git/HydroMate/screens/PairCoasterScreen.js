@@ -3,13 +3,20 @@ import {
   View, Text, Pressable, StyleSheet, ActivityIndicator,
   Alert, Platform, PermissionsAndroid
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { BleManager } from 'react-native-ble-plx';
 import { auth } from '../firebase';
 
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const CHAR_UUID    = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 
-const manager = new BleManager();
+let manager = null;
+function getManager() {
+  if (!manager) {
+    try { manager = new BleManager(); } catch (e) { return null; }
+  }
+  return manager;
+}
 
 async function requestAndroidPermissions() {
   if (Platform.OS !== 'android') return true;
@@ -34,7 +41,7 @@ export default function PairCoasterScreen() {
 
   useEffect(() => {
     return () => {
-      manager.stopDeviceScan();
+      manager?.stopDeviceScan();
       if (scanTimeout.current) clearTimeout(scanTimeout.current);
     };
   }, []);
@@ -56,23 +63,29 @@ export default function PairCoasterScreen() {
     setStatus('scanning');
     setErrorMsg('');
 
-    // Wait for Bluetooth to be powered on before scanning
-    const bleState = await manager.state();
+    const ble = getManager();
+    if (!ble) {
+      setStatus('error');
+      setErrorMsg('Bluetooth not available in Expo Go — use the dev build.');
+      return;
+    }
+
+    const bleState = await ble.state();
     if (bleState !== 'PoweredOn') {
       await new Promise((resolve) => {
-        const sub = manager.onStateChange((state) => {
+        const sub = ble.onStateChange((state) => {
           if (state === 'PoweredOn') { sub.remove(); resolve(); }
         }, true);
       });
     }
 
     scanTimeout.current = setTimeout(() => {
-      manager.stopDeviceScan();
+      ble.stopDeviceScan();
       setStatus('error');
       setErrorMsg("Coaster not found. Make sure it's powered on and the LEDs are pulsing purple.");
     }, 15000);
 
-    manager.startDeviceScan(null, null, async (error, device) => {
+    ble.startDeviceScan(null, null, async (error, device) => {
       if (error) {
         clearTimeout(scanTimeout.current);
         setStatus('error');
@@ -81,7 +94,7 @@ export default function PairCoasterScreen() {
       }
 
       if (device?.name === 'HydraMate') {
-        manager.stopDeviceScan();
+        ble.stopDeviceScan();
         clearTimeout(scanTimeout.current);
         setStatus('connecting');
 
@@ -90,13 +103,11 @@ export default function PairCoasterScreen() {
           await connected.requestMTU(512);
           await connected.discoverAllServicesAndCharacteristics();
           const encoded = btoa(uid);
-          // Use withoutResponse since ESP32 reboots immediately after receiving UID
           await connected.writeCharacteristicWithoutResponseForService(
             SERVICE_UUID, CHAR_UUID, encoded
           );
           setStatus('success');
         } catch (e) {
-          // Disconnect error after write = ESP32 rebooted after saving UID = success
           if (e.message?.includes('disconnected')) {
             setStatus('success');
           } else {
@@ -108,49 +119,81 @@ export default function PairCoasterScreen() {
     });
   };
 
+  const isError = status === 'error';
+  const isSuccess = status === 'success';
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Pair Your Coaster</Text>
+
+      {/* Icon circle — changes color/icon based on state */}
+      <View style={[
+        styles.iconCircle,
+        isError && styles.iconCircleError,
+        isSuccess && styles.iconCircleSuccess,
+      ]}>
+        {(status === 'scanning' || status === 'connecting')
+          ? <ActivityIndicator size="large" color="#fff" />
+          : <Ionicons
+              name={isError ? 'wifi-outline' : 'bluetooth'}
+              size={48}
+              color="#fff"
+            />
+        }
+      </View>
+
+      <Text style={styles.title}>pair your coaster</Text>
       <Text style={styles.subtitle}>
         Power on your HydraMate coaster. The LEDs will pulse purple when ready to pair.
       </Text>
 
+      {/* Scanning label */}
+      {(status === 'scanning' || status === 'connecting') && (
+        <Text style={styles.scanningText}>
+          {status === 'scanning' ? 'Scanning for coaster...' : 'Connecting...'}
+        </Text>
+      )}
+
+      {/* Error card */}
+      {status === 'error' && (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorTitle}>connection failed</Text>
+          <Text style={styles.errorMessage}>{errorMsg}</Text>
+        </View>
+      )}
+
+      {/* Success calibration steps */}
+      {status === 'success' && (
+        <View style={styles.stepCard}>
+          <View style={styles.step}>
+            <View style={[styles.ledDot, { backgroundColor: '#C8A84B' }]} />
+            <Text style={styles.stepText}>LEDs are flashing yellow — place your water bottle on the coaster</Text>
+          </View>
+          <View style={styles.step}>
+            <View style={[styles.ledDot, { backgroundColor: '#AAAAAA' }]} />
+            <Text style={styles.stepText}>Hold the bottle still for 2 seconds</Text>
+          </View>
+          <View style={styles.step}>
+            <View style={[styles.ledDot, { backgroundColor: '#7BAE7F' }]} />
+            <Text style={styles.stepText}>LEDs flash green — calibration complete, you're all set!</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Primary button */}
       {status === 'idle' && (
         <Pressable style={styles.button} onPress={pair}>
           <Text style={styles.buttonText}>Scan for Coaster</Text>
         </Pressable>
       )}
-
-      {(status === 'scanning' || status === 'connecting') && (
-        <View style={styles.statusBox}>
-          <ActivityIndicator size="large" color="#4FC3F7" />
-          <Text style={styles.statusText}>
-            {status === 'scanning' ? 'Scanning for coaster...' : 'Connecting...'}
-          </Text>
-          <Text style={styles.subtitle}>Make sure the LEDs are pulsing purple.</Text>
-        </View>
-      )}
-
-      {status === 'success' && (
-        <View style={styles.statusBox}>
-          <Text style={styles.successText}>Coaster paired!</Text>
-          <Text style={styles.subtitle}>
-            Your coaster will now send data to your account.
-          </Text>
-          <Pressable style={[styles.button, { marginTop: 20 }]} onPress={() => setStatus('idle')}>
-            <Text style={styles.buttonText}>Pair Another</Text>
-          </Pressable>
-        </View>
-      )}
-
       {status === 'error' && (
-        <View style={styles.statusBox}>
-          <Text style={styles.errorText}>Connection failed</Text>
-          <Text style={styles.subtitle}>{errorMsg}</Text>
-          <Pressable style={styles.button} onPress={pair}>
-            <Text style={styles.buttonText}>Try Again</Text>
-          </Pressable>
-        </View>
+        <Pressable style={styles.button} onPress={pair}>
+          <Text style={styles.buttonText}>Try Again</Text>
+        </Pressable>
+      )}
+      {status === 'success' && (
+        <Pressable style={[styles.button, { marginTop: 8 }]} onPress={() => setStatus('idle')}>
+          <Text style={styles.buttonText}>Pair Another Coaster</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -159,51 +202,114 @@ export default function PairCoasterScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A1628',
+    backgroundColor: '#F5F0E8',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
+    padding: 28,
+  },
+  iconCircle: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: '#7BAE7F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 28,
+  },
+  iconCircleError: {
+    backgroundColor: '#C97B7B',
+  },
+  iconCircleSuccess: {
+    backgroundColor: '#7BAE7F',
   },
   title: {
-    color: '#fff',
+    color: '#2C2C2C',
     fontSize: 26,
-    fontWeight: 'bold',
-    marginBottom: 12,
+    fontWeight: '700',
+    marginBottom: 10,
+    textAlign: 'center',
   },
   subtitle: {
-    color: '#546E8A',
-    fontSize: 15,
+    color: '#888888',
+    fontSize: 14,
     textAlign: 'center',
-    marginBottom: 32,
-    lineHeight: 22,
+    lineHeight: 21,
+    marginBottom: 28,
+    paddingHorizontal: 8,
+  },
+  scanningText: {
+    color: '#7BAE7F',
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 24,
+  },
+  errorCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  errorTitle: {
+    color: '#C97B7B',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  errorMessage: {
+    color: '#888888',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  stepCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '100%',
+    gap: 16,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  step: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  ledDot: {
+    width: 13,
+    height: 13,
+    borderRadius: 7,
+    marginTop: 3,
+    flexShrink: 0,
+  },
+  stepText: {
+    color: '#555555',
+    fontSize: 14,
+    lineHeight: 20,
+    flex: 1,
   },
   button: {
-    backgroundColor: '#4FC3F7',
+    backgroundColor: '#7BAE7F',
     paddingVertical: 16,
     paddingHorizontal: 40,
-    borderRadius: 12,
+    borderRadius: 30,
+    width: '100%',
+    alignItems: 'center',
   },
   buttonText: {
-    color: '#0A1628',
-    fontWeight: 'bold',
+    color: '#FFFFFF',
+    fontWeight: '700',
     fontSize: 16,
-  },
-  statusBox: {
-    alignItems: 'center',
-    gap: 16,
-  },
-  statusText: {
-    color: '#4FC3F7',
-    fontSize: 16,
-  },
-  successText: {
-    color: '#6BAD6A',
-    fontSize: 22,
-    fontWeight: 'bold',
-  },
-  errorText: {
-    color: '#FF6B6B',
-    fontSize: 18,
-    fontWeight: 'bold',
   },
 });

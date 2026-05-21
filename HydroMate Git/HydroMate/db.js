@@ -243,12 +243,32 @@ export async function rateStation(stationId, rating) {
 }
 
 /**
+ * Subscribe to all station reviews. Calls callback(map) whenever any review
+ * changes, where map is { [stationId]: review[] }. Returns unsubscribe fn.
+ */
+export function subscribeToAllReviews(callback) {
+    return onValue(ref(db, 'reviews'), (snap) => {
+        if (!snap.exists()) { callback({}); return; }
+        const data = snap.val();
+        const map = {};
+        Object.keys(data).forEach((stationId) => {
+            const stationReviews = data[stationId];
+            map[stationId] = Object.keys(stationReviews).map((key) => ({
+                id: key,
+                ...stationReviews[key],
+            }));
+        });
+        callback(map);
+    });
+}
+
+/**
  * Get all reviews for a specific station.
  */
 export async function getReviewsForStation(stationId) {
     const snap = await get(ref(db, `reviews/${stationId}`));
     if (!snap.exists()) return [];
-    
+
     // Convert object of objects into an array
     const data = snap.val();
     return Object.keys(data).map(key => ({

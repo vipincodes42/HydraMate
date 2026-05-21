@@ -39,6 +39,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "expo-notifications",
       [
         "react-native-ble-plx",
         {
@@ -64,7 +65,8 @@
         {
           "locationWhenInUsePermission": "Allow HydroMate to use your location to find nearby water refill stations."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }
