@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BleManager } from 'react-native-ble-plx';
+import { subscribeToLive } from '../db';
 import { auth } from '../firebase';
 
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
@@ -38,6 +39,21 @@ export default function PairCoasterScreen() {
   const [status, setStatus] = useState('idle'); // idle | scanning | connecting | success | error
   const [errorMsg, setErrorMsg] = useState('');
   const scanTimeout = useRef(null);
+
+  // If the coaster is already paired and pushing to Firebase (e.g. paired via nRF Connect),
+  // flip to success as soon as live data appears.
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const unsub = subscribeToLive(uid, (data) => {
+      if (data) {
+        setStatus((prev) =>
+          prev === 'idle' || prev === 'error' ? 'success' : prev
+        );
+      }
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     return () => {
