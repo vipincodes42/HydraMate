@@ -30,9 +30,6 @@ ESP32
 
 HX711
 
-## Screenshots
-
-(image)
 
 ## Future Work
 
